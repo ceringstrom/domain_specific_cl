@@ -17,12 +17,15 @@ sys.path.append('../')
 
 from utils import *
 
+import wandb
+wandb.init(project="dscl-kidney-ftn-cap", config=tf.flags.FLAGS)
+
 import argparse
 parser = argparse.ArgumentParser()
 #data set type
-parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs'])
+parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs','kidney_cap','kidney_reg'])
 #no of training images
-parser.add_argument('--no_of_tr_imgs', type=str, default='tr1', choices=['tr1', 'tr2', 'tr8','tr20'])
+parser.add_argument('--no_of_tr_imgs', type=str, default='tr1', choices=['tr1', 'tr2', 'tr8','tr20','ftn'])
 #combination of training images
 parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 #learning rate of seg unet
@@ -35,7 +38,7 @@ parser.add_argument('--ver', type=int, default=0)
 
 # Pre-training configs
 #no of training images
-parser.add_argument('--pretr_no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10'])
+parser.add_argument('--pretr_no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10','ptr'])
 #combination of training images
 parser.add_argument('--pretr_comb_tr_imgs', type=str, default='c1', choices=['c1'])
 #version of run
@@ -106,6 +109,7 @@ parser.add_argument('--no_of_neg_regs_override', type=int, default=4)
 parser.add_argument('--n_iter', type=int, default=10001)
 
 parse_config = parser.parse_args()
+wandb.config.update(parse_config)
 #parse_config = parser.parse_args(args=[])
 
 if parse_config.dataset == 'acdc':
@@ -120,6 +124,14 @@ elif parse_config.dataset == 'prostate_md':
     print('load prostate_md configs')
     import experiment_init.init_prostate_md as cfg
     import experiment_init.data_cfg_prostate_md as data_list
+elif parse_config.dataset == 'kidney_cap':
+    print('load kidney_cap configs')
+    import experiment_init.init_kidney_capsule as cfg
+    import experiment_init.data_cfg_kidney as data_list
+elif parse_config.dataset == 'kidney_reg':
+    print('load kidney_reg configs')
+    import experiment_init.init_kidney_regions as cfg
+    import experiment_init.data_cfg_kidney as data_list
 else:
     raise ValueError(parse_config.dataset)
 
@@ -128,7 +140,7 @@ else:
 # ####################################
 #  load dataloader object
 from dataloaders import dataloaderObj
-dt = dataloaderObj(cfg)
+dt = dataloaderObj(cfg,False)
 
 if parse_config.dataset == 'acdc':
     print('set acdc orig img dataloader handle')
@@ -139,6 +151,9 @@ elif parse_config.dataset == 'mmwhs':
 elif parse_config.dataset == 'prostate_md':
     print('set prostate_md orig img dataloader handle')
     orig_img_dt=dt.load_prostate_imgs_md
+elif parse_config.dataset == 'kidney_cap' or parse_config.dataset == 'kidney_reg':
+    print('set kidney_cap orig img dataloader handle')
+    orig_img_dt=dt.load_kidney_imgs
 
 #  load model object
 from models import modelObj
@@ -209,6 +224,7 @@ ae = model.decoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=pars
 ######################################
 # Restore the model and initialize the encoder with the pre-trained weights from last epoch
 ######################################
+
 mp_best=get_chkpt_file(save_dir)
 print('load last step model from pre-training')
 print('mp_best',mp_best)
@@ -406,6 +422,8 @@ for epoch_i in range(start_epoch,n_epochs):
         val_dsc_list.append(mean_f1)
         tr_loss_list.append(np.mean(loss))
         val_loss_list.append(np.mean(mean_total_cost_val))
+        wandb.tensorflow.log(tf.summary.merge_all())
+        wandb.log({"tr_accu": tr_accu, "mean_f1": mean_f1, "loss": loss, "mean_total_cost_val": mean_total_cost_val})
 
         print('epoch_i,loss,f1_val',epoch_i,np.mean(loss),mean_f1_val_prev,mean_f1)
 

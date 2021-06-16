@@ -160,48 +160,48 @@ class modelObj:
 
         net_global_loss=0
 
-        # if(global_loss_exp_no==0):
-        #     ######################
-        #     # G^{R} - Like in simCLR [12]
-        #     ######################
-        #     bs=2*self.batch_size
-        #     #loop over each pair of positive images in the batch to calculate the Net global contrastive loss over the whole batch.
-        #     for pos_index in range(0,bs,2):
-        #         #indexes of positive pair of samples (x_1,x_2)
-        #         num_i1=np.arange(pos_index,pos_index+1,dtype=np.int32)
-        #         num_i2=np.arange(pos_index+1,pos_index+2,dtype=np.int32)
-        #
-        #         #indexes of corresponding negative samples as per positive pair of samples (x_1,x_2)
-        #         den_index_i1=np.arange(0,bs,dtype=np.int32)
-        #         den_index_i1 = np.delete(den_index_i1, pos_index)
-        #         den_index_i2=np.arange(0,bs,dtype=np.int32)
-        #         den_index_i2 = np.delete(den_index_i2, pos_index+1)
-        #
-        #         # gather required positive samples (x_1,x_2) for the numerator term
-        #         x_num_i1=tf.gather(reg_pred,num_i1)
-        #         x_num_i2=tf.gather(reg_pred,num_i2)
-        #         # gather required corresponding negative samples for the denominator term
-        #         x_den_i1=tf.gather(reg_pred,den_index_i1)
-        #         x_den_i2=tf.gather(reg_pred,den_index_i2)
-        #         #print('a1',x_num_i1,x_den_i1,x_num_i2,x_den_i2)
-        #
-        #         #calculate cosine similarity score as in simCLR[12] + global contrastive loss for the pair of positive images (x_1,x_2)
-        #         # loss for positive image x_1 (num_i1_loss)
-        #         # numerator of loss term (num_i1_ss), & denominator of loss term (den_i1_ss)
-        #         num_i1_ss=self.cos_sim(x_num_i1,x_num_i2,temp_fac)
-        #         den_i1_ss=self.cos_sim(x_num_i1,x_den_i1,temp_fac)
-        #         num_i1_loss=-tf.log(tf.exp(num_i1_ss)/tf.math.reduce_sum(tf.exp(den_i1_ss)))
-        #         net_global_loss = net_global_loss + num_i1_loss
-        #         #print('a2',num_i1_ss,den_i1_ss,num_i1_loss)
-        #
-        #         # loss for positive image x_2 (num_i2_loss)
-        #         # numerator of loss term (num_i2_ss), & denominator of loss term (den_i2_ss)
-        #         num_i2_ss=self.cos_sim(x_num_i2,x_num_i1,temp_fac)
-        #         den_i2_ss=self.cos_sim(x_num_i2,x_den_i2,temp_fac)
-        #         num_i2_loss=-tf.log(tf.exp(num_i2_ss)/tf.math.reduce_sum(tf.exp(den_i2_ss)))
-        #         net_global_loss = net_global_loss + num_i2_loss
+        if(global_loss_exp_no==0):
+            ######################
+            # G^{R} - Like in simCLR [12]
+            ######################
+            bs=2*self.batch_size
+            #loop over each pair of positive images in the batch to calculate the Net global contrastive loss over the whole batch.
+            for pos_index in range(0,bs,2):
+                #indexes of positive pair of samples (x_1,x_2)
+                num_i1=np.arange(pos_index,pos_index+1,dtype=np.int32)
+                num_i2=np.arange(pos_index+1,pos_index+2,dtype=np.int32)
+        
+                #indexes of corresponding negative samples as per positive pair of samples (x_1,x_2)
+                den_index_i1=np.arange(0,bs,dtype=np.int32)
+                den_index_i1 = np.delete(den_index_i1, pos_index)
+                den_index_i2=np.arange(0,bs,dtype=np.int32)
+                den_index_i2 = np.delete(den_index_i2, pos_index+1)
+        
+                # gather required positive samples (x_1,x_2) for the numerator term
+                x_num_i1=tf.gather(reg_pred,num_i1)
+                x_num_i2=tf.gather(reg_pred,num_i2)
+                # gather required corresponding negative samples for the denominator term
+                x_den_i1=tf.gather(reg_pred,den_index_i1)
+                x_den_i2=tf.gather(reg_pred,den_index_i2)
+                #print('a1',x_num_i1,x_den_i1,x_num_i2,x_den_i2)
+        
+                #calculate cosine similarity score as in simCLR[12] + global contrastive loss for the pair of positive images (x_1,x_2)
+                # loss for positive image x_1 (num_i1_loss)
+                # numerator of loss term (num_i1_ss), & denominator of loss term (den_i1_ss)
+                num_i1_ss=self.cos_sim(x_num_i1,x_num_i2,temp_fac)
+                den_i1_ss=self.cos_sim(x_num_i1,x_den_i1,temp_fac)
+                num_i1_loss=-tf.log(tf.exp(num_i1_ss)/tf.math.reduce_sum(tf.exp(den_i1_ss)))
+                net_global_loss = net_global_loss + num_i1_loss
+                #print('a2',num_i1_ss,den_i1_ss,num_i1_loss)
+        
+                # loss for positive image x_2 (num_i2_loss)
+                # numerator of loss term (num_i2_ss), & denominator of loss term (den_i2_ss)
+                num_i2_ss=self.cos_sim(x_num_i2,x_num_i1,temp_fac)
+                den_i2_ss=self.cos_sim(x_num_i2,x_den_i2,temp_fac)
+                num_i2_loss=-tf.log(tf.exp(num_i2_ss)/tf.math.reduce_sum(tf.exp(den_i2_ss)))
+                net_global_loss = net_global_loss + num_i2_loss
 
-        if(global_loss_exp_no==1):
+        elif(global_loss_exp_no==1):
             ######################
             # G^{D-} - Proposed variant
             # We split each volume into n_parts and select 1 image from each n_part of the volume

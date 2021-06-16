@@ -17,13 +17,15 @@ sys.path.append('../')
 
 from utils import *
 
+import wandb
+wandb.init(project="dscl-kidney-reg", config=tf.flags.FLAGS)
 
 import argparse
 parser = argparse.ArgumentParser()
 #dataset selection
-parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs'])
+parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs', 'kidney_cap', 'kidney_reg'])
 #no of training images
-parser.add_argument('--no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10'])
+parser.add_argument('--no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10','ptr'])
 #combination of training images
 parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 #learning rate of Enc net
@@ -56,7 +58,7 @@ parser.add_argument('--bt_size', type=int,default=12)
 
 parse_config = parser.parse_args()
 #parse_config = parser.parse_args(args=[])
-
+wandb.config.update(parse_config)
 if parse_config.dataset == 'acdc':
     print('load acdc configs')
     import experiment_init.init_acdc as cfg
@@ -69,6 +71,14 @@ elif parse_config.dataset == 'prostate_md':
     print('load prostate_md configs')
     import experiment_init.init_prostate_md as cfg
     import experiment_init.data_cfg_prostate_md as data_list
+elif parse_config.dataset == 'kidney_cap':
+    print('load kidney configs')
+    import experiment_init.init_kidney_capsule as cfg
+    import experiment_init.data_cfg_kidney as data_list
+elif parse_config.dataset == 'kidney_reg':
+    print('load kidney configs')
+    import experiment_init.init_kidney_regions as cfg
+    import experiment_init.data_cfg_kidney as data_list
 else:
     raise ValueError(parse_config.dataset)
 
@@ -79,7 +89,7 @@ cfg.batch_size_ft=parse_config.bt_size
 # ####################################
 #  load dataloader object
 from dataloaders import dataloaderObj
-dt = dataloaderObj(cfg)
+dt = dataloaderObj(cfg,True)
 
 if parse_config.dataset == 'acdc' :
     print('set acdc orig img dataloader handle')
@@ -90,6 +100,12 @@ elif parse_config.dataset == 'mmwhs':
 elif parse_config.dataset == 'prostate_md':
     print('set prostate_md orig img dataloader handle')
     orig_img_dt=dt.load_prostate_imgs_md
+elif parse_config.dataset == 'kidney_cap':
+    print('set kidney orig img dataloader handle')
+    orig_img_dt=dt.load_kidney_imgs
+elif parse_config.dataset == 'kidney_reg':
+    print('set kidney orig img dataloader handle')
+    orig_img_dt=dt.load_kidney_imgs
 
 #  load model object
 from models import modelObj
@@ -179,28 +195,28 @@ tr_loss_list=[]
 # loop over all the epochs to pre-train the Encoder Network.
 for epoch_i in range(start_epoch,n_epochs):
 
-    # if (parse_config.global_loss_exp_no == 0):
-    #     #########################
-    #     # G^{R} -  default loss formulation as in simCLR (sample images in a batch from all volumes)
-    #     #########################
-    #     # original images batch sampled from unlabeled images
-    #     img_batch = shuffle_minibatch([unl_imgs], batch_size=cfg.batch_size_ft, labels_present=0)
-    #
-    #     # make 2 different sets of images from this chosen batch.
-    #     # Each set is applied with different set of crop and intensity augmentation (aug) - brightness + distortion
-    #
-    #     # Set 1 - random crop followed by random intensity aug
-    #     crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
-    #     color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
-    #
-    #     # Set 2 - different random crop followed by random intensity aug
-    #     crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
-    #     color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
-    #
-    #     # Stitch these 2 augmented sets into 1 batch for pre-training
-    #     cat_batch = stitch_two_crop_batches([color_batch1, color_batch2], cfg, cfg.batch_size_ft)
+    if (parse_config.global_loss_exp_no == 0):
+        #########################
+        # G^{R} -  default loss formulation as in simCLR (sample images in a batch from all volumes)
+        #########################
+        # original images batch sampled from unlabeled images
+        img_batch = shuffle_minibatch([unl_imgs], batch_size=cfg.batch_size_ft, labels_present=0)
+    
+        # make 2 different sets of images from this chosen batch.
+        # Each set is applied with different set of crop and intensity augmentation (aug) - brightness + distortion
+    
+        # Set 1 - random crop followed by random intensity aug
+        crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+    
+        # Set 2 - different random crop followed by random intensity aug
+        crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+    
+        # Stitch these 2 augmented sets into 1 batch for pre-training
+        cat_batch = stitch_two_crop_batches([color_batch1, color_batch2], cfg, cfg.batch_size_ft)
 
-    if(parse_config.global_loss_exp_no==1):
+    elif(parse_config.global_loss_exp_no==1):
         #########################
         # G^{D-} - prevent negatives to be contrasted for images coming from corresponding partitions from other volumes for a given positive image.
         #########################
@@ -318,6 +334,8 @@ for epoch_i in range(start_epoch,n_epochs):
         train_writer.flush()
         print('epoch_i,tr_loss,val_loss', epoch_i, np.mean(tr_loss))
         tr_loss_list.append(np.mean(tr_loss))
+        wandb.tensorflow.log(tf.summary.merge_all())
+        wandb.log({"loss": tr_loss})
 
 
     if ((epoch_i==n_epochs-1)):

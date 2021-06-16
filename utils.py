@@ -363,6 +363,7 @@ def get_max_chkpt_file(model_path,min_ep=10):
     returns:
         fin_chkpt_max: checkpoint file with best dsc value
     '''
+    print(model_path)
     for dirName, subdirList, fileList in os.walk(model_path):
         fileList.sort()
         for filename in fileList:
@@ -389,11 +390,12 @@ def get_chkpt_file(model_path,match_name='',min_ep=10):
         returns:
             fin_chkpt_max: checkpoint file with last epoch number over all epochs
         '''
-
+    print(model_path)
     for dirName, subdirList, fileList in os.walk(model_path):
         fileList.sort()
         #min_ep=10
-        #print(fileList)
+        print("HELLO")
+        print(fileList)
         for filename in fileList:
             if ".meta" in filename.lower():
                 numbers = re.findall('\d+',filename)
@@ -409,7 +411,7 @@ def get_chkpt_file(model_path,match_name='',min_ep=10):
                     print('2')
                     chkpt_max=os.path.join(dirName,filename)
                     min_ep=int(numbers[0])
-    #print(chkpt_max)
+    # print(chkpt_max)
     fin_chkpt_max = re.sub('\.meta$', '', chkpt_max)
     #print(fin_chkpt_max)
     return fin_chkpt_max

@@ -20,7 +20,7 @@ from utils import *
 import argparse
 parser = argparse.ArgumentParser()
 #data set type
-parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs'])
+parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','prostate_md','mmwhs','kidney'])
 #no of training images
 parser.add_argument('--no_of_tr_imgs', type=str, default='tr1', choices=['tr1', 'tr2','tr8','trall'])
 #combination of training images
@@ -96,6 +96,10 @@ elif parse_config.dataset == 'prostate_md':
     print('load prostate_md configs')
     import experiment_init.init_prostate_md as cfg
     import experiment_init.data_cfg_prostate_md as data_list
+elif parse_config.dataset == 'kidney':
+    print('load kidney configs')
+    import experiment_init.init_kidney as cfg
+    import experiment_init.data_kidney as data_list
 else:
     raise ValueError(parse_config.dataset)
 
@@ -115,6 +119,9 @@ elif parse_config.dataset == 'mmwhs':
 elif parse_config.dataset == 'prostate_md':
     print('set prostate_md orig img dataloader handle')
     orig_img_dt=dt.load_prostate_imgs_md
+elif parse_config.dataset == 'kidney':
+    print('set kidney orig img dataloader handle')
+    orig_img_dt=dt.load_kidney_imgs
 
 #  load model object
 from models import modelObj

@@ -10,16 +10,18 @@ from skimage import transform
 class dataloaderObj:
 
     #define functions to load data from acdc/prostate/mmwhs dataset
-    def __init__(self,cfg):
+    def __init__(self,cfg,ptr):
         #print('dataloaders init')
         self.data_path_tr=cfg.data_path_tr
         self.data_path_tr_cropped=cfg.data_path_tr_cropped
+        self.data_path_pretr=cfg.data_path_pretr
+        self.data_path_pretr_cropped=cfg.data_path_pretr_cropped
         self.target_resolution=cfg.target_resolution
         self.dataset_name=cfg.dataset_name
         self.size=cfg.size
         self.num_classes=cfg.num_classes
         self.one_label=0
-
+        self.ptr = ptr
         
     def normalize_minmax_data(self, image_data,min_val=1,max_val=99):
         """
@@ -180,6 +182,50 @@ class dataloaderObj:
             else:
                 return image_data_test_sys,label_data_test_sys,pixel_size,affine_tst
 
+    def load_kidney_imgs(self,study_id_list,ret_affine=0,label_present=1):
+        """
+        #Load kidney and its label with pixel dimensions
+        input params :
+            study_id_list: subject id number of the image to be loaded
+            ret_affine: to enable returning of affine transformation matrix of the loaded image
+            label_present : to enable loading of 3D mask if the label is present or not (0 is used for unlabeled images)
+        returns :
+            image_data_test_sys : normalized 3D image
+            label_data_test_sys : 3D label mask of the image
+            pixel_size : pixel dimensions of the loaded image
+            affine_tst : affine transformation matrix of the loaded image
+        """
+        for study_id in study_id_list:
+            if self.ptr:
+                img_path=os.path.join(self.data_path_pretr, str(study_id)+".nii.gz")
+            else:
+                img_path=os.path.join(str(self.data_path_tr), "imagesTr", str(study_id)+".nii.gz")
+                seg_path=os.path.join(str(self.data_path_tr), "labelsTr", str(study_id)+".nii.gz")
+        
+        # Load the 3D image
+        image_data_test_load = nib.load(img_path)
+        image_data_test_sys=image_data_test_load.get_data()
+        pixel_size=image_data_test_load.header['pixdim'][1:4]
+        affine_tst=image_data_test_load.affine
+        
+        image_data_test_sys=self.normalize_minmax_data(image_data_test_sys)
+
+        if(label_present==1):
+            # Load the segmentation mask
+            label_data_test_load = nib.load(seg_path)
+            label_data_test_sys=label_data_test_load.get_data()
+
+        if(label_present==0):
+            if(ret_affine==0):
+                return image_data_test_sys,pixel_size
+            else:
+                return image_data_test_sys,pixel_size,affine_tst
+        else:
+            if(ret_affine==0):
+                return image_data_test_sys,label_data_test_sys,pixel_size
+            else:
+                return image_data_test_sys,label_data_test_sys,pixel_size,affine_tst
+
     def crop_or_pad_slice_to_size_1hot(self, img_slice, nx, ny):
         """
         To crop the input 2D slice for the chosen dimensions in 1-hot encoding format
@@ -290,7 +336,6 @@ class dataloaderObj:
                 if(label_present==1):
                      mask_cropped_tmp=np.reshape(mask_cropped,(nx,ny,1))
                      cropped_mask=np.concatenate((cropped_mask,mask_cropped_tmp),axis=2)
-
         if(label_present==1):
             return cropped_img,cropped_mask
         else:
@@ -341,17 +386,21 @@ class dataloaderObj:
            mask_cat : corresponding stack of 3D segmentation masks of all the patient id nos.
        """
        count=0
+       i = 0
        for study_id in train_ids_list:
-
+           i += 1
            # Load the 3D image
-           img_fname = str(self.data_path_tr_cropped)+str(study_id)+'/img_cropped.nii.gz'
+           if self.ptr:
+               img_fname = os.path.join(str(self.data_path_pretr_cropped), study_id+'.nii.gz')
+           else:
+               img_fname = os.path.join(str(self.data_path_tr_cropped), "imagesTr", study_id+'.nii.gz')
            img_tmp_load = nib.load(img_fname)
            img_tmp=img_tmp_load.get_data()
 
            #load the mask if label is present
            if(label_present==1):
                # Load the segmentation mask
-               mask_fname = str(self.data_path_tr_cropped)+str(study_id)+'/mask_cropped.nii.gz'
+               mask_fname = os.path.join(str(self.data_path_tr_cropped), "labelsTr", study_id+'.nii.gz')
                mask_tmp_load = nib.load(mask_fname)
                mask_tmp=mask_tmp_load.get_data()
 

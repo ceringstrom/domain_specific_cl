@@ -170,8 +170,7 @@ class f1_utilsObj:
         '''
         y_pred= predictions_mask.flatten()
         y_true= gt_mask.flatten()
-
-        f1_val= f1_score(y_true, y_pred, average=None)
+        f1_val= f1_score(y_true, y_pred, average=None, labels=list(range(self.num_classes)))
 
         return f1_val
 
@@ -372,8 +371,10 @@ class f1_utilsObj:
             array_img = nib.Nifti1Image(re_pred_mask_sys.astype(np.int16), affine_tst)
             pred_filename = str(seg_model_dir)+'pred_seg_id_'+str(test_id)+'.nii.gz'
             nib.save(array_img, pred_filename)
-
-            dsc_tmp=np.reshape(dsc_val[1:self.num_classes], (1, self.num_classes - 1))
+            if (len(dsc_val) > 0):
+                dsc_tmp=np.reshape(dsc_val[1:self.num_classes], (1, self.num_classes - 1))
+            else:
+                dsc_tmp
             mean_20subjs_dsc.append(np.mean(dsc_tmp))
 
             if(count==0):
