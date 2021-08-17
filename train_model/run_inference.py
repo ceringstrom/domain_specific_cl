@@ -40,16 +40,16 @@ parser.add_argument('--ver', type=int, default=0)
 #no of training images
 parser.add_argument('--pretr_no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10','ptr'])
 #combination of training images
-parser.add_argument('--pretr_comb_tr_imgs', type=str, default='c1')
+parser.add_argument('--pretr_comb_tr_imgs', type=str, default='c1', choices=['c1'])
 #version of run
 parser.add_argument('--pretr_ver', type=int, default=0)
 #no of iterations to run
-parser.add_argument('--pretr_n_iter', type=int, default=5000)
+parser.add_argument('--pretr_n_iter', type=int, default=10001)
 #data augmentation used in pre-training
 parser.add_argument('--pretr_data_aug', type=int, default=0)
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
 # Later, these re-sized images are used for pre-training using global contrastive loss.
-parser.add_argument('--pretr_cont_bbox_dim', type=int, default=192)
+parser.add_argument('--pretr_cont_bbox_dim', type=int, default=100)
 # temperature_scaling factor
 parser.add_argument('--temp_fac', type=float, default=0.1)
 #learning rate of seg unet
@@ -62,6 +62,8 @@ parser.add_argument('--lr_reg', type=float, default=0.001)
 parser.add_argument('--global_loss_exp_no', type=int, default=0)
 # no_of_partitions per volume
 parser.add_argument('--n_parts', type=int, default=4)
+
+parser.add_argument('--split', type=int, default=100)
 
 # type of local_loss_exp_no for Local contrastive loss
 # 0 - default loss formulation. Sample local regions from two images. these 2 images are intensity transformed version of same image.
@@ -108,8 +110,6 @@ parser.add_argument('--no_of_neg_regs_override', type=int, default=4)
 #no of iterations to run
 parser.add_argument('--n_iter', type=int, default=10001)
 
-parser.add_argument('--split', type=int, default=100)
-
 parse_config = parser.parse_args()
 wandb.config.update(parse_config)
 #parse_config = parser.parse_args(args=[])
@@ -131,7 +131,7 @@ elif parse_config.dataset == 'kidney_cap':
     import experiment_init.init_kidney_capsule as cfg
     import experiment_init.data_cfg_kidney as data_list
 elif parse_config.dataset == 'kidney_reg':
-    print('load kidney_reg configs')
+    print('load kidney_cap configs')
     import experiment_init.init_kidney_regions as cfg
     import experiment_init.data_cfg_kidney as data_list
 else:
@@ -142,7 +142,7 @@ else:
 # ####################################
 #  load dataloader object
 from dataloaders import dataloaderObj
-dt = dataloaderObj(cfg,False)
+dt = dataloaderObj(cfg, ptr=False)
 
 if parse_config.dataset == 'acdc':
     print('set acdc orig img dataloader handle')
@@ -156,6 +156,7 @@ elif parse_config.dataset == 'prostate_md':
 elif parse_config.dataset == 'kidney_cap' or parse_config.dataset == 'kidney_reg':
     print('set kidney_cap orig img dataloader handle')
     orig_img_dt=dt.load_kidney_imgs
+
 
 #  load model object
 from models import modelObj
@@ -175,7 +176,7 @@ val_step_update=cfg.val_step_update
 #  load encoder + 'l' decoder blocks pre-trained weights from pre-trained model stage wise with global and local loss respectively.
 ######################################
 #define directory where pre-trained encoder + decoder model was saved
-save_dir=str(cfg.srt_dir)+'/models/'+'split_100/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
 
 save_dir=str(save_dir)+'/load_encoder_wgts_from_pretrained_model/'
 
@@ -217,34 +218,6 @@ print('save dir ',save_dir)
 ######################################
 # Define Encoder(e) + 'l' decoder blocks (d_l) + g_2 network graph used for pre-training. We load the pre-trained weights of encoder (e) and 'l' decoder blocks.
 tf.reset_default_graph()
-ae = model.decoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=parse_config.temp_fac, \
-                        no_of_local_regions=parse_config.no_of_local_regions, no_of_decoder_blocks=parse_config.no_of_decoder_blocks, \
-                        local_loss_exp_no=parse_config.local_loss_exp_no, local_reg_size=parse_config.local_reg_size, \
-                        wgt_en=parse_config.wgt_en, no_of_neg_local_regions=parse_config.no_of_neg_local_regions, \
-                        no_of_neg_regs_override=parse_config.no_of_neg_regs_override, inf=1)
-
-######################################
-# Restore the model and initialize the encoder with the pre-trained weights from last epoch
-######################################
-
-mp_best=get_chkpt_file(save_dir)
-print('load last step model from pre-training')
-print('mp_best',mp_best)
-
-saver_rnet = tf.train.Saver()
-sess_rnet = tf.Session(config=config)
-saver_rnet.restore(sess_rnet, mp_best)
-print("Model restored")
-
-#get all trainable variable names and their values
-print('Loading trainable vars')
-cont_variables_names = [v.name for v in tf.trainable_variables()]
-#print('var names list',cont_variables_names)
-cont_var_values = sess_rnet.run(cont_variables_names)
-sess_rnet.close()
-print('loaded encoder + l decoder blocks weight values from pre-trained model with global and local contrastive loss')
-######################################
-
 ######################################
 # Define final U-net model & directory to save - for segmentation task
 #######################################
@@ -319,55 +292,14 @@ best_model_dir=str(save_dir)+'best_model/'
 pathlib.Path(best_model_dir).mkdir(parents=True, exist_ok=True)
 ######################################
 
-######################################
-#writer for train summary
-train_writer = tf.summary.FileWriter(logs_path)
-#writer for dice score and val summary
-#dsc_writer = tf.summary.FileWriter(logs_path)
-val_sum_writer = tf.summary.FileWriter(logs_path)
-######################################
-
-######################################
-# Define session and saver
-sess = tf.Session(config=config)
-sess.run(tf.global_variables_initializer())
-saver = tf.train.Saver(max_to_keep=2)
-######################################
-
-######################################
-# assign values to all trainable ops of network
-assign_op=[]
-print('Init of trainable vars')
-for new_var in tf.trainable_variables():
-    for var, var_val in zip(cont_variables_names, cont_var_values):
-        if (str(var) == str(new_var.name) and ('reg_' not in str(new_var.name) and 'seg_' not in str(new_var.name))):
-            #print('match name',new_var.name,var)
-            tmp_op=new_var.assign(var_val)
-            assign_op.append(tmp_op)
-
-sess.run(assign_op)
 print('init done for all the encoder + l decoder blocks weights and biases from pre-trained model')
 #######################################
 
-######################################
-# Load training and validation images & labels
-######################################
-#load training volumes id numbers to train the unet
-train_list = data_list.train_data(parse_config.no_of_tr_imgs,parse_config.comb_tr_imgs)
-#load saved training data in cropped dimensions directly
-print('load train volumes')
-train_imgs, train_labels = dt.load_cropped_img_labels(train_list)
-#print('train shape',train_imgs.shape,train_labels.shape)
-
-#load validation volumes id numbers to save the best model during training
-val_list = data_list.val_data(parse_config.no_of_tr_imgs,parse_config.comb_tr_imgs)
-#load val data both in original dimensions and its cropped dimensions
-print('load val volumes')
-val_label_orig,val_img_crop,val_label_crop,pixel_val_list=load_val_imgs(val_list,dt,orig_img_dt)
 
 # get test volumes id list
 print('get test volumes list')
 test_list = data_list.test_data()
+print(test_list)
 ######################################
 
 ######################################
@@ -385,75 +317,6 @@ loss_least_val=1
 f1_mean_least_val=0.0000000001
 ######################################
 
-######################################
-# Loop over all the epochs to train the CNN.
-# Randomly sample a batch of images from all data per epoch. On the chosen batch, apply random augmentations and optimize the network.
-for epoch_i in range(start_epoch,n_epochs):
-    
-    # Sample shuffled img, GT labels -- from labeled data
-    ld_img_batch,ld_label_batch=shuffle_minibatch_mtask([train_imgs,train_labels],batch_size=cfg.mtask_bs)
-    if(parse_config.data_aug==1):
-        # Apply affine transformations
-        ld_img_batch,ld_label_batch=augmentation_function([ld_img_batch,ld_label_batch],dt)
-    if(parse_config.rd_en==1 or parse_config.ri_en==1):
-        # Apply random augmentations - random deformations + random contrast & brightness values
-        ld_img_batch,ld_label_batch=create_rand_augs(cfg,parse_config,sess,ae_rd,ae_rc,ld_img_batch,ld_label_batch)
-
-    #Run optimizer update on the training data (labeled data)
-    train_summary,loss,_=sess.run([ae['train_summary'],ae['seg_cost'],ae['optimizer_unet_all']],\
-                                      feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:True})
-    
-    if(epoch_i%val_step_update==0):
-        train_writer.add_summary(train_summary, epoch_i)
-        train_writer.flush()
-
-    if(epoch_i%cfg.val_step_update==0):
-        # Measure validation volumes accuracy in Dice score (DSC) and evaluate validation loss
-        # Save the model with the best DSC over validation volumes.
-        mean_f1_val_prev,mp_best,mean_total_cost_val,mean_f1=f1_util.track_val_dsc(sess,ae,ae_1hot,saver,mean_f1_val_prev,threshold_f1,\
-                                    best_model_dir,val_list,val_img_crop,val_label_crop,val_label_orig,pixel_val_list,\
-                                    checkpoint_filename,epoch_i,en_1hot_val=parse_config.en_1hot)
-
-        tr_y_pred=sess.run(ae['y_pred'],feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:False})
-
-        if(parse_config.en_1hot==1):
-            tr_accu=f1_util.calc_f1_score(np.argmax(tr_y_pred,axis=-1),np.argmax(ld_label_batch,-1))
-        else:
-            tr_accu=f1_util.calc_f1_score(np.argmax(tr_y_pred,axis=-1),ld_label_batch)
-        tr_dsc_list.append(np.mean(tr_accu))
-        val_dsc_list.append(mean_f1)
-        tr_loss_list.append(np.mean(loss))
-        val_loss_list.append(np.mean(mean_total_cost_val))
-        wandb.tensorflow.log(tf.summary.merge_all())
-        wandb.log({"tr_accu": tr_accu, "mean_f1": mean_f1, "loss": loss, "mean_total_cost_val": mean_total_cost_val})
-
-        print('epoch_i,loss,f1_val',epoch_i,np.mean(loss),mean_f1_val_prev,mean_f1)
-
-        #Compute and save validation images dice & loss summary
-        val_summary_msg = sess.run(ae['val_summary'], feed_dict={ae['mean_dice']: mean_f1, ae['val_totalc']:mean_total_cost_val})
-        val_sum_writer.add_summary(val_summary_msg, epoch_i)
-        val_sum_writer.flush()
-
-        if(np.mean(mean_f1_val_prev)>f1_mean_least_val):
-            f1_mean_least_val=mean_f1_val_prev
-            ep_no_list.append(epoch_i)
-
-    if ((epoch_i==n_epochs-1)):
-        # model saved at the last epoch of training
-        mp = str(save_dir) + str(checkpoint_filename) + '_epochs_' + str(epoch_i) + ".ckpt"
-        saver.save(sess, mp)
-        try:
-            mp_best
-        except NameError:
-            mp_best=mp
-            
-
-######################################
-# Plot the training, validation (val) loss and DSC score of training & val images over all the epochs of training.
-f1_util.plt_seg_loss([tr_loss_list,val_loss_list],save_dir,title_str='ft_local_loss_model',plt_name='tr_seg_loss',ep_no=epoch_i)
-f1_util.plt_seg_loss([tr_dsc_list,val_dsc_list],save_dir,title_str='ft_local_loss_model',plt_name='tr_dsc_score',ep_no=epoch_i)
-
-sess.close()
 ######################################
 
 ######################################

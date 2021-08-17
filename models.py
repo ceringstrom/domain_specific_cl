@@ -83,6 +83,17 @@ class modelObj:
         cos_sim_val=tf.linalg.matmul(norm_vec_a,norm_vec_b,transpose_b=True)/temp_fac
         return cos_sim_val
 
+    def contrastive_loss(self, x1, x2, y, margin):
+        # print("new")
+        # print(x2.shape)
+        x1 = tf.nn.l2_normalize(x1,axis=-1)
+        x2 = tf.nn.l2_normalize(x2,axis=-1)
+        # print(x2.shape)
+        d = tf.reduce_sum(tf.square(x1 - x2))
+        d_sqrt = tf.sqrt(d)
+        loss = 0.5 * ((1-y) * d + y * tf.square(tf.math.maximum(0.0, margin-d)))
+        return loss
+
     def encoder_network(self,x,train_phase,no_filters,encoder_list_return=0):
         # Define the Encoder Network
 
@@ -144,7 +155,10 @@ class modelObj:
         # placeholders for the network Inputs
         x = tf.placeholder(tf.float32, shape=[None, self.img_size_x, self.img_size_y, num_channels], name='x')
         train_phase = tf.placeholder(tf.bool, name='train_phase')
-
+        if(global_loss_exp_no==5 or global_loss_exp_no==6):
+            y_l = tf.placeholder(tf.float32, shape=self.batch_size, name='y_l')
+        else:
+            y_l = None
         ###################################
         # Last layer from Encoder network (e)
         enc_c6_b = self.encoder_network(x, train_phase, no_filters,encoder_list_return=0)
@@ -400,6 +414,107 @@ class modelObj:
                     den_i4_i2_ss=self.cos_sim(x_num_i4, x_den, temp_fac)
                     num_i4_i2_loss=-tf.log(tf.exp(num_i2_i4_ss)/(tf.exp(num_i2_i4_ss)+tf.math.reduce_sum(tf.exp(den_i4_i2_ss))))
                     net_global_loss = net_global_loss + num_i4_i2_loss
+        elif(global_loss_exp_no==3):
+            bs=4*self.batch_size
+
+            for pos_index in range(0,bs,4):
+                num_i1=np.arange(pos_index,pos_index+1,dtype=np.int32)
+                num_i2=np.arange(pos_index+1,pos_index+2,dtype=np.int32)
+                num_i3=np.arange(pos_index+2,pos_index+3,dtype=np.int32)
+                num_i4=np.arange(pos_index+3,pos_index+4,dtype=np.int32)
+            
+                # indexes of corresponding negative samples as per positive pair of samples: (x_1,x_2), (x_1,x_3), (x_2,x_3)
+                den_index_net=np.arange(0,bs,dtype=np.int32)
+
+                # Pruning the negative samples
+                # Deleting the indexes of the samples in the batch used as negative samples for a given positive image. These indexes belong to identical partitions in other volumes in the batch.
+                ind_l=list(range(pos_index, pos_index+4))
+
+                den_indexes = np.delete(den_index_net, ind_l)
+
+                # gather required positive samples x_1,x_2,x_3 for the numerator term
+                x_num_i1=tf.gather(reg_pred,num_i1)
+                x_num_i2=tf.gather(reg_pred,num_i2)
+                x_num_i3=tf.gather(reg_pred,num_i3)
+                x_num_i4=tf.gather(reg_pred,num_i4)
+
+                # gather required negative samples x_1,x_2,x_3 for the denominator term
+                x_den=tf.gather(reg_pred,den_indexes)
+
+                # calculate cosine similarity score + global contrastive loss for each pair of positive images
+
+                #for positive pair (x_1,x_2);
+                # numerator of loss term (num_i1_i2_ss) & denominator of loss term (den_i1_i2_ss) & loss (num_i1_i2_loss)
+                num_i1_i2_ss=self.cos_sim(x_num_i1,x_num_i2,temp_fac)
+                den_i1_i2_ss=self.cos_sim(x_num_i1,x_den,temp_fac)
+                num_i1_i2_loss=-tf.log(tf.exp(num_i1_i2_ss)/(tf.exp(num_i1_i2_ss)+tf.math.reduce_sum(tf.exp(den_i1_i2_ss))))
+                net_global_loss = net_global_loss + num_i1_i2_loss
+                # for positive pair (x_2,x_1);
+                # numerator same & denominator of loss term (den_i1_i2_ss) & loss (num_i1_i2_loss)
+                den_i2_i1_ss=self.cos_sim(x_num_i2,x_den,temp_fac)
+                num_i2_i1_loss=-tf.log(tf.exp(num_i1_i2_ss)/(tf.exp(num_i1_i2_ss)+tf.math.reduce_sum(tf.exp(den_i2_i1_ss))))
+                net_global_loss = net_global_loss + num_i2_i1_loss
+
+                # for positive pair (x_1,x_3);
+                # numerator of loss term (num_i1_i3_ss) & denominator of loss term (den_i1_i3_ss) & loss (num_i1_i3_loss)
+                num_i1_i3_ss=self.cos_sim(x_num_i1,x_num_i3,temp_fac)
+                den_i1_i3_ss=self.cos_sim(x_num_i1,x_den,temp_fac)
+                num_i1_i3_loss=-tf.log(tf.exp(num_i1_i3_ss)/(tf.exp(num_i1_i3_ss)+tf.math.reduce_sum(tf.exp(den_i1_i3_ss))))
+                net_global_loss = net_global_loss + num_i1_i3_loss
+                # for positive pair (x_3,x_1);
+                # numerator same & denominator of loss term (den_i3_i1_ss) & loss (num_i3_i1_loss)
+                den_i3_i1_ss=self.cos_sim(x_num_i3,x_den,temp_fac)
+                num_i3_i1_loss=-tf.log(tf.exp(num_i1_i3_ss)/(tf.exp(num_i1_i3_ss)+tf.math.reduce_sum(tf.exp(den_i3_i1_ss))))
+                net_global_loss = net_global_loss + num_i3_i1_loss
+            
+                # for positive pair (x_1,x_4);
+                # numerator of loss term (num_i1_i4_ss) & denominator of loss term (den_i1_i4_ss) & loss (num_i1_i4_loss)
+                num_i1_i4_ss=self.cos_sim(x_num_i1,x_num_i4,temp_fac)
+                den_i1_i4_ss=self.cos_sim(x_num_i1,x_den,temp_fac)
+                num_i1_i4_loss=-tf.log(tf.exp(num_i1_i4_ss)/(tf.exp(num_i1_i4_ss)+tf.math.reduce_sum(tf.exp(den_i1_i4_ss))))
+                net_global_loss = net_global_loss + num_i1_i4_loss
+                # for positive pair (x_4,x_1);
+                # numerator same & denominator of loss term (den_i4_i1_ss) & loss (num_i4_i1_loss)
+                den_i4_i1_ss=self.cos_sim(x_num_i4,x_den,temp_fac)
+                num_i4_i1_loss=-tf.log(tf.exp(num_i1_i4_ss)/(tf.exp(num_i1_i4_ss)+tf.math.reduce_sum(tf.exp(den_i4_i1_ss))))
+                net_global_loss = net_global_loss + num_i4_i1_loss
+
+                # for positive pair (x_2,x_3);
+                # numerator of loss term (num_i2_i3_ss) & denominator of loss term (den_i2_i3_ss) & loss (num_i2_i3_loss)
+                num_i2_i3_ss=self.cos_sim(x_num_i2,x_num_i3,temp_fac)
+                den_i2_i3_ss=self.cos_sim(x_num_i2,x_den,temp_fac)
+                num_i2_i3_loss=-tf.log(tf.exp(num_i2_i3_ss)/(tf.exp(num_i2_i3_ss)+tf.math.reduce_sum(tf.exp(den_i2_i3_ss))))
+                net_global_loss = net_global_loss + num_i2_i3_loss
+                # for positive pair (x_3,x_2):
+                # numerator same & denominator of loss term (den_i3_i2_ss) & loss (num_i3_i2_loss)
+                den_i3_i2_ss=self.cos_sim(x_num_i3,x_den,temp_fac)
+                num_i3_i2_loss=-tf.log(tf.exp(num_i2_i3_ss)/(tf.exp(num_i2_i3_ss)+tf.math.reduce_sum(tf.exp(den_i3_i2_ss))))
+                net_global_loss = net_global_loss + num_i3_i2_loss
+
+                # for positive pair (x_2,x_4);
+                # numerator of loss term (num_i2_i4_ss) & denominator of loss term (den_i2_i4_ss) & loss (num_i2_i4_loss)
+                num_i2_i4_ss=self.cos_sim(x_num_i2,x_num_i4,temp_fac)
+                den_i2_i4_ss=self.cos_sim(x_num_i2,x_den,temp_fac)
+                num_i2_i4_loss=-tf.log(tf.exp(num_i2_i4_ss)/(tf.exp(num_i2_i4_ss)+tf.math.reduce_sum(tf.exp(den_i2_i4_ss))))
+                net_global_loss = net_global_loss + num_i2_i4_loss
+                # for positive pair (x_4,x_2):
+                # numerator same & denominator of loss term (den_i4_i2_ss) & loss (num_i4_i2_loss)
+                den_i4_i2_ss=self.cos_sim(x_num_i4,x_den,temp_fac)
+                num_i4_i2_loss=-tf.log(tf.exp(num_i2_i4_ss)/(tf.exp(num_i2_i4_ss)+tf.math.reduce_sum(tf.exp(den_i4_i2_ss))))
+                net_global_loss = net_global_loss + num_i4_i2_loss
+
+                # for positive pair (x_3,x_4);
+                # numerator of loss term (num_i3_i4_ss) & denominator of loss term (den_i3_i4_ss) & loss (num_i3_i4_loss)
+                num_i3_i4_ss=self.cos_sim(x_num_i3,x_num_i4,temp_fac)
+                den_i3_i4_ss=self.cos_sim(x_num_i3,x_den,temp_fac)
+                num_i3_i4_loss=-tf.log(tf.exp(num_i3_i4_ss)/(tf.exp(num_i3_i4_ss)+tf.math.reduce_sum(tf.exp(den_i3_i4_ss))))
+                net_global_loss = net_global_loss + num_i3_i4_loss
+                # for positive pair (x_4,x_3):
+                # numerator same & denominator of loss term (den_i4_i3_ss) & loss (num_i4_i3_loss)
+                den_i4_i3_ss=self.cos_sim(x_num_i4,x_den,temp_fac)
+                num_i4_i3_loss=-tf.log(tf.exp(num_i3_i4_ss)/(tf.exp(num_i3_i4_ss)+tf.math.reduce_sum(tf.exp(den_i4_i3_ss))))
+                net_global_loss = net_global_loss + num_i4_i3_loss
+
         elif(global_loss_exp_no==4):
             ######################
             # G^{D} - Proposed variant
@@ -570,8 +685,16 @@ class modelObj:
                     den_i6_i3_ss=self.cos_sim(x_num_i6, x_den, temp_fac)
                     num_i6_i3_loss=-tf.log(tf.exp(num_i3_i6_ss)/(tf.exp(num_i3_i6_ss)+tf.math.reduce_sum(tf.exp(den_i6_i3_ss))))
                     net_global_loss = net_global_loss + num_i6_i3_loss
+        elif(global_loss_exp_no==5 or global_loss_exp_no==6):
+            for index in range(0,self.batch_size,1):
+                num_i1=np.arange(index,index+1,dtype=np.int32)
+                num_i2=np.arange(self.batch_size+index,self.batch_size+index+1,dtype=np.int32)
+                x_num_i1=tf.gather(reg_pred,num_i1)
+                x_num_i2=tf.gather(reg_pred,num_i2)
+                label = tf.gather(y_l, num_i1)
 
-
+                loss = self.contrastive_loss(x_num_i1, x_num_i2, label, temp_fac)
+                net_global_loss = net_global_loss + loss
 
         if(global_loss_exp_no==0):
             bs=2*self.batch_size
@@ -580,6 +703,9 @@ class modelObj:
             bs=3*self.batch_size
             reg_cost=net_global_loss/bs
         elif(global_loss_exp_no==2):
+            bs=4*self.batch_size
+            reg_cost=net_global_loss/bs
+        elif(global_loss_exp_no==3):
             bs=4*self.batch_size
             reg_cost=net_global_loss/bs
         elif(global_loss_exp_no==4):
@@ -614,7 +740,7 @@ class modelObj:
         val_summary = tf.summary.merge([val_totalc_sum])
         #val_summary = tf.summary.merge([mean_dice_summary,val_totalc_sum])
 
-        return {'x':x, 'train_phase':train_phase, 'reg_cost':cost_reg, \
+        return {'x':x, 'y_l':y_l, 'train_phase':train_phase, 'reg_cost':cost_reg, \
                 'optimizer_unet_reg':optimizer_unet_reg, 'train_summary':train_summary, 'reg_pred':reg_pred,\
                 'val_totalc':val_totalc, 'val_summary':val_summary}
 
@@ -788,7 +914,8 @@ class modelObj:
         # Inputs
         x = tf.placeholder(tf.float32, shape=[None, self.img_size_x, self.img_size_y, num_channels], name='x')
         train_phase = tf.placeholder(tf.bool, name='train_phase')
-
+        if(local_loss_exp_no==5 or local_loss_exp_no==6):
+            y_l = tf.placeholder(tf.float32, shape=self.batch_size, name='y_l')
         ###################################
         # Encoder network
         ########################
@@ -1337,6 +1464,236 @@ class modelObj:
                     local_loss=local_loss-tf.log(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))/(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))+tf.math.reduce_sum(den_i3_ss)))
 
             local_loss=local_loss/no_of_local_regions
+        
+        elif(local_loss_exp_no==2):
+            y_fin=y_fin_tmp
+
+            for pos_index in range(0,bs,4):
+
+                #indexes of positive pair of samples (f_a1_i,f_a2_i) of input images (x_a1_i,x_a2_i) from the batch of feature maps.
+                num_i1 = np.arange(pos_index,pos_index+1,dtype=np.int32)
+                num_i2 = np.arange(pos_index+1, pos_index+2, dtype=np.int32)
+                num_i3 = np.arange(pos_index+2,pos_index+3,dtype=np.int32)
+                num_i4 = np.arange(pos_index+3, pos_index+4, dtype=np.int32)
+
+                # gather required positive samples (f_a1_i,f_a2_i) of (x_a1_i,x_a2_i) for the numerator term
+                x_num_i1=tf.gather(y_fin,num_i1)
+                x_num_i2=tf.gather(y_fin,num_i2)
+                x_num_i3=tf.gather(y_fin,num_i3)
+                x_num_i4=tf.gather(y_fin,num_i4)
+                #print('x_num_i1,x_num_i2',x_num_i1,x_num_i2)
+                # loop over all defined local regions within a feature map
+                for local_pos_index in range(0,no_of_local_regions,1):
+                    # if local region size is 3x3
+                    if(local_reg_size==1):
+                        # 'pos_index_num' is the positive local region index in feature map f_a1_i of image x_a1_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i1=tf.gather(x_num_i1,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i1=tf.gather(x_num_tmp_i1,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i1_flat = tf.layers.flatten(inputs=x_num_tmp_i1)
+                        if(wgt_en==1):
+                            x_num_tmp_i1=tf.layers.dense(inputs=x_n_i1_flat, units=128, name='seg_pred', activation=None, use_bias=False,reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i1=x_n_i1_flat
+
+                        # corresponding positive local region index in feature map f_a2_i of image x_a2_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i2=tf.gather(x_num_i2,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i2=tf.gather(x_num_tmp_i2,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i2_flat = tf.layers.flatten(inputs=x_num_tmp_i2)
+                        if(wgt_en==1):
+                            x_num_tmp_i2=tf.layers.dense(inputs=x_n_i2_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i2=x_n_i2_flat
+
+                        # corresponding positive local region index in feature map f_a2_i of image x_a2_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i3=tf.gather(x_num_i3,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i3=tf.gather(x_num_tmp_i3,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i3_flat = tf.layers.flatten(inputs=x_num_tmp_i3)
+                        if(wgt_en==1):
+                            x_num_tmp_i3=tf.layers.dense(inputs=x_n_i3_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i3=x_n_i3_flat
+                        
+                        # corresponding positive local region index in feature map f_a2_i of image x_a2_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i4=tf.gather(x_num_i4,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i4=tf.gather(x_num_tmp_i4,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i4_flat = tf.layers.flatten(inputs=x_num_tmp_i4)
+                        if(wgt_en==1):
+                            x_num_tmp_i4=tf.layers.dense(inputs=x_n_i4_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i4=x_n_i4_flat
+                    else:
+                        # positive local region 'j' in feature map from image x_a1_i
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i1=tf.gather(x_num_i1,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i1=tf.gather(x_num_tmp_i1,pos_sample_indexes[local_pos_index,1],axis=1)
+
+                        # positive local region 'j' in feature map from image x_a2_i
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i2=tf.gather(x_num_i2,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i2=tf.gather(x_num_tmp_i2,pos_sample_indexes[local_pos_index,1],axis=1)
+
+                        # positive local region 'j' in feature map from image x_a1_j (j is a different volume to i)
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i3=tf.gather(x_num_i3,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i3=tf.gather(x_num_tmp_i3,pos_sample_indexes[local_pos_index,1],axis=1)
+
+                        # positive local region 'j' in feature map from image x_a1_k (k is a different volume to i)
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i4=tf.gather(x_num_i4,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i4=tf.gather(x_num_tmp_i4,pos_sample_indexes[local_pos_index,1],axis=1)
+                    
+                    # calculate cosine similarity score for the pair of positive local regions with index 'j' within the feature maps from images (x_a1_i,x_a2_i), (x_a1_i,x_a1_j) & (x_a1_i,x_a1_k).
+                    # loss for positive pairs (x_a1_i,x_a2_i), (x_a1_i,x_a1_j) & (x_a1_i,x_a1_k) in (num_i1_i2_ss,num_i1_i3_ss,num_i1_i4_ss)
+                    # Numerator loss terms of local loss
+                    num_i1_i2_ss=self.cos_sim(x_num_tmp_i1,x_num_tmp_i2,temp_fac)
+                    num_i1_i3_ss=self.cos_sim(x_num_tmp_i1,x_num_tmp_i3,temp_fac)
+                    num_i1_i4_ss=self.cos_sim(x_num_tmp_i1,x_num_tmp_i4,temp_fac)
+
+                    neg_samples_index_list = np.squeeze(neg_sample_indexes[local_pos_index])
+
+                    no_of_neg_pts=neg_samples_index_list.shape[0] #check for memory issues
+
+                    # Denominator loss terms of local loss
+                    den_i1_ss,den_i2_ss,den_i3_ss=0,0,0
+                    for local_neg_index in range(0,no_of_neg_pts,1):
+                        if(local_reg_size==1):
+                            #negative local regions in feature map (f_a1_i) from image (x_a1_i)
+                            x_d_tmp_i1=tf.gather(x_num_i1,[neg_samples_index_list[local_neg_index,0],neg_samples_index_list[local_neg_index,0]+1,neg_samples_index_list[local_neg_index,0]+2],axis=1)
+                            x_d_tmp_i1=tf.gather(x_d_tmp_i1,[neg_samples_index_list[local_neg_index,1],neg_samples_index_list[local_neg_index,1]+1,neg_samples_index_list[local_neg_index,1]+2],axis=2)
+                            x_d_i1_flat = tf.layers.flatten(inputs=x_d_tmp_i1)
+                            if(wgt_en==1):
+                                x_den_tmp_i1=tf.layers.dense(inputs=x_d_i1_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE )
+                            else:
+                                x_den_tmp_i1=x_d_i1_flat
+
+                            #negative local regions in feature map (f_a2_i) from image (x_a2_i)
+                            x_d_tmp_i2=tf.gather(x_num_i2,[neg_samples_index_list[local_neg_index,0],neg_samples_index_list[local_neg_index,0]+1,neg_samples_index_list[local_neg_index,0]+2],axis=1)
+                            x_d_tmp_i2=tf.gather(x_d_tmp_i2,[neg_samples_index_list[local_neg_index,1],neg_samples_index_list[local_neg_index,1]+1,neg_samples_index_list[local_neg_index,1]+2],axis=2)
+                            x_d_i2_flat = tf.layers.flatten(inputs=x_d_tmp_i2)
+                            if(wgt_en==1):
+                                x_den_tmp_i2=tf.layers.dense(inputs=x_d_i2_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE )
+                            else:
+                                x_den_tmp_i2=x_d_i2_flat
+
+                            #negative local regions in feature map (f_a1_j) from image (x_a1_j)
+                            x_d_tmp_i3=tf.gather(x_num_i3,[neg_samples_index_list[local_neg_index,0],neg_samples_index_list[local_neg_index,0]+1,neg_samples_index_list[local_neg_index,0]+2],axis=1)
+                            x_d_tmp_i3=tf.gather(x_d_tmp_i3,[neg_samples_index_list[local_neg_index,1],neg_samples_index_list[local_neg_index,1]+1,neg_samples_index_list[local_neg_index,1]+2],axis=2)
+                            x_d_i3_flat = tf.layers.flatten(inputs=x_d_tmp_i3)
+                            if(wgt_en==1):
+                                x_den_tmp_i3=tf.layers.dense(inputs=x_d_i3_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE )
+                            else:
+                                x_den_tmp_i3=x_d_i3_flat
+
+                            #negative local regions in feature map (f_a1_k) from image (x_a1_k)
+                            x_d_tmp_i4=tf.gather(x_num_i4,[neg_samples_index_list[local_neg_index,0],neg_samples_index_list[local_neg_index,0]+1,neg_samples_index_list[local_neg_index,0]+2],axis=1)
+                            x_d_tmp_i4=tf.gather(x_d_tmp_i4,[neg_samples_index_list[local_neg_index,1],neg_samples_index_list[local_neg_index,1]+1,neg_samples_index_list[local_neg_index,1]+2],axis=2)
+                            x_d_i4_flat = tf.layers.flatten(inputs=x_d_tmp_i4)
+                            if(wgt_en==1):
+                                x_den_tmp_i4=tf.layers.dense(inputs=x_d_i4_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE )
+                            else:
+                                x_den_tmp_i4=x_d_i4_flat
+                        else:
+                            #negative local regions in feature map (f_a1_i) from image (x_a1_i)
+                            x_den_tmp_i1=tf.gather(x_num_i1,neg_samples_index_list[local_neg_index,0],axis=1)
+                            x_den_tmp_i1=tf.gather(x_den_tmp_i1,neg_samples_index_list[local_neg_index,1],axis=1)
+
+                            #negative local regions in feature map (f_a2_i) from image (x_a2_i)
+                            x_den_tmp_i2=tf.gather(x_num_i2,neg_samples_index_list[local_neg_index,0],axis=1)
+                            x_den_tmp_i2=tf.gather(x_den_tmp_i2,neg_samples_index_list[local_neg_index,1],axis=1)
+
+                            #negative local regions in feature map (f_a1_j) from image (x_a1_j)
+                            x_den_tmp_i3=tf.gather(x_num_i3,neg_samples_index_list[local_neg_index,0],axis=1)
+                            x_den_tmp_i3=tf.gather(x_den_tmp_i3,neg_samples_index_list[local_neg_index,1],axis=1)
+
+                            #negative local regions in feature map (f_a1_k) from image (x_a1_k)
+                            x_den_tmp_i4=tf.gather(x_num_i4,neg_samples_index_list[local_neg_index,0],axis=1)
+                            x_den_tmp_i4=tf.gather(x_den_tmp_i4,neg_samples_index_list[local_neg_index,1],axis=1)
+
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions within the same feature map (f_a1_i)
+                        #cosine score b/w patch1 of img1a vs other patches from img1a
+                        den_i1_ss=den_i1_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i1,temp_fac))
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions from another feature map (f_a2_i) which is augmented version of x_i
+                        #cosine score b/w patch1 of img1a vs other patches from img1b
+                        den_i1_ss=den_i1_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i2,temp_fac))
+
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions within the same feature map (f_a1_i)
+                        #cosine score b/w patch1 of img1a vs other patches from img1a
+                        den_i2_ss=den_i2_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i1,temp_fac))
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions in a feature map (f_a1_j) from a diffrent volume 'j' compared to i.
+                        #cosine score b/w patch1 of img1a vs other patches from img2a
+                        den_i2_ss=den_i2_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i3,temp_fac))
+
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions within the same feature map (f_a1_i)
+                        #cosine score b/w patch1 of img1a vs other patches from img1a
+                        den_i3_ss=den_i3_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i1,temp_fac))
+                        # cosine score b/w local region of feature map (f_a1_i) vs other local regions in a feature map (f_a1_k) from a diffrent volume 'k' compared to i.
+                        #cosine score b/w patch1 of img1a vs other patches from img3a
+                        den_i3_ss=den_i3_ss+tf.exp(self.cos_sim(x_num_tmp_i1,x_den_tmp_i4,temp_fac))
+
+                    #local loss from feature map f_a1_i and f_a2_i
+                    #loss from img-i vs i+12 (1a vs 1b)
+                    local_loss=local_loss-tf.log(tf.math.reduce_sum(tf.exp(num_i1_i2_ss))/(tf.math.reduce_sum(tf.exp(num_i1_i2_ss))+tf.math.reduce_sum(den_i1_ss)))
+                    # local loss from feature map f_a1_i and f_a1_j
+                    #loss from img-i vs i+4 (1a vs 2a)
+                    local_loss=local_loss-tf.log(tf.math.reduce_sum(tf.exp(num_i1_i3_ss))/(tf.math.reduce_sum(tf.exp(num_i1_i3_ss))+tf.math.reduce_sum(den_i2_ss)))
+                    # local loss from feature map f_a1_i and f_a1_k
+                    #loss from img-i vs i+8 (1a vs 2b)
+                    local_loss=local_loss-tf.log(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))/(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))+tf.math.reduce_sum(den_i3_ss)))
+        elif(local_loss_exp_no==5 or local_loss_exp_no==6):
+            y_fin=y_fin_tmp
+            bs = self.batch_size
+            for pos_index in range(0, bs):
+                num_i1 = np.arange(pos_index,pos_index+1,dtype=np.int32)
+                num_i2 = np.arange(bs+pos_index, bs+pos_index+1, dtype=np.int32)
+
+                # gather required positive samples (f_a1_i,f_a2_i) of (x_a1_i,x_a2_i) for the numerator term
+                x_num_i1=tf.gather(y_fin,num_i1)
+                x_num_i2=tf.gather(y_fin,num_i2)
+                for local_pos_index in range(0,no_of_local_regions,1):
+                    # if local region size is 3x3
+                    if(local_reg_size==1):
+                        # 'pos_index_num' is the positive local region index in feature map f_a1_i of image x_a1_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i1=tf.gather(x_num_i1,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i1=tf.gather(x_num_tmp_i1,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i1_flat = tf.layers.flatten(inputs=x_num_tmp_i1)
+                        if(wgt_en==1):
+                            x_num_tmp_i1=tf.layers.dense(inputs=x_n_i1_flat, units=128, name='seg_pred', activation=None, use_bias=False,reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i1=x_n_i1_flat
+
+                        # corresponding positive local region index in feature map f_a2_i of image x_a2_i that contributes to the numerator term.
+                        #fetch x and y coordinates
+                        x_num_tmp_i2=tf.gather(x_num_i2,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        x_num_tmp_i2=tf.gather(x_num_tmp_i2,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        x_n_i2_flat = tf.layers.flatten(inputs=x_num_tmp_i2)
+                        if(wgt_en==1):
+                            x_num_tmp_i2=tf.layers.dense(inputs=x_n_i2_flat, units=128, name='seg_pred', activation=None, use_bias=False, reuse=tf.AUTO_REUSE)
+                        else:
+                            x_num_tmp_i2=x_n_i2_flat
+
+                    else:
+                        # positive local region 'j' in feature map from image x_a1_i
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i1=tf.gather(x_num_i1,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i1=tf.gather(x_num_tmp_i1,pos_sample_indexes[local_pos_index,1],axis=1)
+
+                        # positive local region 'j' in feature map from image x_a2_i
+                        # fetch x and y coordinates of local region
+                        x_num_tmp_i2=tf.gather(x_num_i2,pos_sample_indexes[local_pos_index,0],axis=1)
+                        x_num_tmp_i2=tf.gather(x_num_tmp_i2,pos_sample_indexes[local_pos_index,1],axis=1)
+
+                    label = y_l[pos_index]
+                    # calculate cosine similarity score for the pair of positive local regions with index 'j' within the feature maps from images (x_a1_i,x_a2_i), (x_a1_i,x_a1_j) & (x_a1_i,x_a1_k).
+                    # loss for positive pairs (x_a1_i,x_a2_i), (x_a1_i,x_a1_j) & (x_a1_i,x_a1_k) in (num_i1_i2_ss,num_i1_i3_ss,num_i1_i4_ss)
+                    # Numerator loss terms of local loss
+                    num_i1_i2_ss=self.contrastive_loss(x_num_tmp_i1,x_num_tmp_i2,y_l,temp_fac)
+
+                    local_loss = local_loss + num_i1_i2_ss
 
         net_local_loss=local_loss/bs
 
@@ -1369,6 +1726,6 @@ class modelObj:
         if(inf==1):
             return {'x':x, 'train_phase':train_phase,'y_pred':y_fin}
         else:
-            return {'x':x, 'train_phase':train_phase, 'reg_cost':cost_net, 'optimizer_unet_dec':optimizer_unet_dec,\
+            return {'x':x, 'y_l':y_l, 'train_phase':train_phase, 'reg_cost':cost_net, 'optimizer_unet_dec':optimizer_unet_dec,\
                     'train_summary':train_summary, 'y_pred':y_fin,'val_totalc':val_totalc, 'val_summary':val_summary}
 

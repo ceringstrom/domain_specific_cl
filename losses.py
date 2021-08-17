@@ -8,6 +8,20 @@ class lossObj:
     def __init__(self):
         print('loss init')
 
+    def dice_speckle_loss(self, logits, labels, distributions, alpha=0.5):
+        with tf.name_scope('dice_loss'):
+            dice_loss = dice_loss_with_backgrnd(logits, labels)
+
+            
+            for i in range(1, 4):
+                masked_distribution = logits[:,:,:,i] * distributions # adjust dimensions here
+                indices = tf.where(tf.not_equal(masked_distribution, 0))
+                nonzero_entries = masked_distribution[indices]
+                nonzero_entries = tf.linalg.normalize(nonzero_entries)
+                std = tf.math.reduce_std(nonzero_entries)
+
+
+
     def dice_loss_with_backgrnd(self, logits, labels, epsilon=1e-10):
         '''
         Calculate a dice loss defined as `1-foreground_dice`. Default mode assumes that the 0 label
@@ -19,7 +33,8 @@ class lossObj:
         returns:
             loss: Dice loss with background
         '''
-
+        print(logits.shape)
+        print(labels.shape)
         with tf.name_scope('dice_loss'):
 
             prediction = tf.nn.softmax(logits)
@@ -48,7 +63,8 @@ class lossObj:
         returns:
             loss: Dice loss without background
         '''
-
+        print(logits.shape)
+        print(labels.shape)
         with tf.name_scope('dice_loss'):
 
             prediction = tf.nn.softmax(logits)
@@ -73,7 +89,8 @@ class lossObj:
         returns:
             loss:  weighted cross entropy loss
         '''
-
+        print(logits.shape)
+        print(labels.shape)
         loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels))
         return loss
 
@@ -87,7 +104,8 @@ class lossObj:
         returns:
             loss:  weighted cross entropy loss
         '''
-
+        print(logits.shape)
+        print(labels.shape)
         # deduce weights for batch samples based on their true label
         weights = tf.reduce_sum(class_weights * labels, axis=3)
 

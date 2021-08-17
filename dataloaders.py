@@ -375,6 +375,55 @@ class dataloaderObj:
     #    else:
     #        return img_cat
 
+    def load_list_cropped_img_labels(self, train_ids_list,label_present=1):
+        """
+        # Load the already created and stored a-priori acdc/prostate/mmwhs image and its labels that are pre-processed: normalized and cropped to chosen dimensions
+        input params :
+            train_ids_list : patient ids of the image and label pairs to be loaded
+            label_present : to indicate if the image has labels provided or not (used for unlabeled images)
+        returns:
+            img_cat : stack of 3D images of all the patient id nos.
+            mask_cat : corresponding stack of 3D segmentation masks of all the patient id nos.
+        """
+        count=0
+        i = 0
+        img_cat = []
+        for study_id in train_ids_list:
+            print(i)
+            i += 1
+            # Load the 3D image
+            if self.ptr:
+                img_fname = os.path.join(str(self.data_path_pretr_cropped), study_id+'.nii.gz')
+            else:
+                img_fname = os.path.join(str(self.data_path_tr_cropped), "imagesTr", study_id+'.nii.gz')
+            img_tmp_load = nib.load(img_fname)
+            img_tmp=img_tmp_load.get_data()
+        #    img_tmp = np.expand_dims(img_tmp, axis=3)
+
+            #load the mask if label is present
+            if(label_present==1):
+                # Load the segmentation mask
+                mask_fname = os.path.join(str(self.data_path_tr_cropped), "labelsTr", study_id+'.nii.gz')
+                mask_tmp_load = nib.load(mask_fname)
+                mask_tmp=mask_tmp_load.get_data()
+
+            img_cat.append(img_tmp)
+        #    if(count==0):
+        #       img_cat=img_tmp
+        #       if(label_present==1):
+        #           mask_cat=mask_tmp
+        #       count=1
+        #    else:
+        #       img_cat=np.concatenate((img_cat,img_tmp),axis=3)
+        #       if(label_present==1):
+        #           mask_cat=np.concatenate((mask_cat,mask_tmp),axis=2)
+
+        if(label_present==1):
+            return img_cat,mask_cat
+        else:
+            return img_cat
+
+
     def load_cropped_img_labels(self, train_ids_list,label_present=1):
        """
        # Load the already created and stored a-priori acdc/prostate/mmwhs image and its labels that are pre-processed: normalized and cropped to chosen dimensions
@@ -387,7 +436,9 @@ class dataloaderObj:
        """
        count=0
        i = 0
+       img_cat = []
        for study_id in train_ids_list:
+           print(i)
            i += 1
            # Load the 3D image
            if self.ptr:
@@ -396,6 +447,7 @@ class dataloaderObj:
                img_fname = os.path.join(str(self.data_path_tr_cropped), "imagesTr", study_id+'.nii.gz')
            img_tmp_load = nib.load(img_fname)
            img_tmp=img_tmp_load.get_data()
+        #    img_tmp = np.expand_dims(img_tmp, axis=3)
 
            #load the mask if label is present
            if(label_present==1):

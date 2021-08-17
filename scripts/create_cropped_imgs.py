@@ -19,7 +19,7 @@ parser.add_argument('--dataset', type=str, default='acdc', choices=['acdc','pros
 parse_config = parser.parse_args()
 #parse_config = parser.parse_args(args=[])
 
-selection_file = "/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/data/split.json"
+selection_file = "/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/split.json"
 
 if parse_config.dataset == 'acdc':
     print('load acdc configs')
@@ -41,7 +41,7 @@ else:
 # ####################################
 #  load dataloader object
 from dataloaders import dataloaderObj
-dt = dataloaderObj(cfg)
+dt = dataloaderObj(cfg, ptr=True)
 print(parse_config.dataset)
 if parse_config.dataset == 'acdc' :
     #print('set acdc orig img dataloader handle')
@@ -61,9 +61,9 @@ elif parse_config.dataset == 'kidney_tr':
     orig_img_dt = dt.load_kidney_imgs
     with open(selection_file) as fp:
         selection = json.load(fp)
-    labeled_id_list=selection['train'] + selection["validation"]
+    labeled_id_list=selection["1.0"]['train']
     start_id, end_id = 0, len(labeled_id_list)
-
+labeled_id_list = [x.replace('.png', '') for x in labeled_id_list]
 # For loop to go over all available images
 for index in range(start_id,end_id):
     if(index<10):
@@ -97,20 +97,25 @@ for index in range(start_id,end_id):
         continue
     
     #check if mask exists
+    print(mask_path)
     if(path.exists(mask_path)):
         print("hi")
         # Load the image &/mask
-        img_sys,label_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1,label_present=1,prtr=False)
+        img_sys,label_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1,label_present=1)
         # Crop the loaded image &/mask to target resolution
         cropped_img_sys,cropped_mask_sys = dt.preprocess_data(img_sys, label_sys, pixel_size)
     else:
+        print("HERE")
         # Load the image &/mask
-        img_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1,label_present=1)
+        img_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1,label_present=False)
+        print(img_sys.shape)
         #dummy mask with zeros
         label_sys=np.zeros_like(img_sys)
+        print("HERE")
         # Crop the loaded image &/mask to target resolution
         cropped_img_sys = dt.preprocess_data(img_sys, label_sys, pixel_size, label_present=0)
-    
+        print(cropped_img_sys.shape)
+    print("HERE")
     #output directory to save cropped image &/mask
     if not(parse_config.dataset == 'kidney_ptr' or parse_config.dataset == 'kidney_tr'):
         save_dir_tmp=str(cfg.data_path_tr_cropped)+str(test_id)+'/'
@@ -132,6 +137,7 @@ for index in range(start_id,end_id):
     if (parse_config.dataset == 'kidney_ptr'):
         array_img = nib.Nifti1Image(cropped_img_sys, affine_tst)
         pred_filename = os.path.join(str(cfg.data_path_pretr_cropped), labeled_id_list[index]+'.nii.gz')
+        print(array_img.shape)
         nib.save(array_img, pred_filename)
         print(pred_filename)
     elif(parse_config.dataset == 'kidney_tr'):

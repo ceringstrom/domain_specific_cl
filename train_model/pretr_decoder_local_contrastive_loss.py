@@ -39,13 +39,13 @@ parser.add_argument('--ver', type=int, default=0)
 parser.add_argument('--temp_fac', type=float, default=0.1)
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
 # Later, these re-sized images are used for pre-training using global contrastive loss.
-parser.add_argument('--bbox_dim', type=int, default=100)
+parser.add_argument('--bbox_dim', type=int, default=192)
 
 #data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--pretr_data_aug', type=int, default=0, choices=[0,1])
+parser.add_argument('--pretr_data_aug', type=int, default=0, choices=[0,1,2])
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
 # Later, these re-sized images are used for pre-training using global contrastive loss.
-parser.add_argument('--pretr_bbox_dim', type=int, default=100)
+parser.add_argument('--pretr_bbox_dim', type=int, default=192)
 #no of training images
 parser.add_argument('--pretr_no_of_tr_imgs', type=str, default='tr52', choices=['tr52','tr22','tr10', 'ptr'])
 #combination of training images
@@ -111,7 +111,9 @@ parser.add_argument('--no_of_neg_regs_override', type=int, default=4)
 parser.add_argument('--bt_size', type=int,default=12)
 
 #no of iterations to run
-parser.add_argument('--n_iter', type=int, default=10001)
+parser.add_argument('--n_iter', type=int, default=5000)
+
+parser.add_argument('--split', type=int, default=100)
 
 parse_config = parser.parse_args()
 wandb.config.update(parse_config)
@@ -173,7 +175,7 @@ f1_util = f1_utilsObj(cfg,dt)
 # Restore the model and initialize the encoder with the pre-trained weights from last epoch
 ######################################
 #define save_dir of pre-trained encoder model
-save_dir=str(cfg.srt_dir)+'/models/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
 
 save_dir=str(save_dir)+'/bt_size_'+str(parse_config.bt_size)+'/'
 
@@ -217,11 +219,11 @@ print('loaded encoder weight values from pre-trained model with global contrasti
 
 ######################################
 #define directory to save the pre-training model of decoder with encoder weights frozen (encoder weights obtained from earlier pre-training step)
-save_dir=str(cfg.srt_dir)+'/models/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
 
 save_dir=str(save_dir)+'/load_encoder_wgts_from_pretrained_model/'
 
-if(parse_config.data_aug==0):
+if(parse_config.pretr_data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
 else:
     save_dir=str(save_dir)+'/with_data_aug/'
@@ -265,8 +267,11 @@ unl_list = data_list.train_data(parse_config.no_of_tr_imgs,parse_config.comb_tr_
 print('load unlabeled images for pre-training')
 #print(unl_list)
 
+print(parse_config.global_loss_exp_no)
 if(parse_config.local_loss_exp_no==0):
     unl_imgs=dt.load_cropped_img_labels(unl_list,label_present=0)
+elif(parse_config.local_loss_exp_no==2 or parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+    unl_imgs=dt.load_list_cropped_img_labels(unl_list,label_present=0)
 else:
     _,unl_imgs,_,_=load_val_imgs(unl_list,dt,orig_img_dt)
 
@@ -291,8 +296,10 @@ ae = model.decoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=pars
 
 if(parse_config.local_loss_exp_no==1):
     cfg.batch_size_ft=12
-
-ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
+if(parse_config.local_loss_exp_no==2 or parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+    ae_rc = model.brit_cont_net(batch_size=2*cfg.batch_size_ft)
+else:
+    ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
 ######################################
 
 ######################################
@@ -375,10 +382,54 @@ for epoch_i in range(start_epoch,n_epochs):
 
         # stitch 2 batches into 1 batch for pre-training
         cat_batch = np.concatenate([color_batch1[0:cfg.batch_size_ft], color_batch2[0:cfg.batch_size_ft]], axis=0)
+    elif(parse_config.local_loss_exp_no==2):
+        #########################
+        # G^{D} -  Match corresponding local regions across two intensity transformed images (x_i_a1,x_j_a1) from 2 different volumes from same partition.
+        # where x_i_a1, x_j_a1 are from volume i and j, respectively. (i not equal to j).
+        #########################
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        # original images batch sampled from unlabeled images
+        img_batch=sample_minibatch_for_global_loss_opti_cine(unl_imgs,cfg,cfg.batch_size_ft,n_parts)
+        # img_batch=img_batch[0:cfg.batch_size_ft]
 
+        crop_batch1=img_batch
+        # Set 1 - random intensity aug
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # Set 2 - different random intensity aug
+        color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
 
+        # stitch 2 batches into 1 batch for pre-training
+        cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+    elif(parse_config.local_loss_exp_no==5):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=False)
+        print("labels")
+        print(labels)
+        print(len(img_batch))
+        print(len(labels))
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
+    elif(parse_config.local_loss_exp_no==6):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=True)
+        print("labels")
+        print(labels)
+        print(len(img_batch))
+        print(len(labels))
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
     #Run optimizer update on the training unlabeled data
-    train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_dec']],\
+    if (parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+        train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_dec']],\
+                                        feed_dict={ae['x']:cat_batch,ae['train_phase']:True,ae['y_l']:labels})
+    else:
+        train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_dec']],\
                                      feed_dict={ae['x']:cat_batch,ae['train_phase']:True})
 
     if(epoch_i%cfg.val_step_update==0):
@@ -390,6 +441,9 @@ for epoch_i in range(start_epoch,n_epochs):
         wandb.tensorflow.log(tf.summary.merge_all())
         wandb.log({"loss": tr_loss})
 
+    if (epoch_i%20==0):
+        mp = str(save_dir) + str(checkpoint_filename) + '_temp' + ".ckpt"
+        saver.save(sess, mp)
     if ((epoch_i==n_epochs-1)):
         # model saved at the last epoch of training
         mp = str(save_dir) + str(checkpoint_filename) + '_epochs_' + str(epoch_i) + ".ckpt"

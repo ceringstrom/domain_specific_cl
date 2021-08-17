@@ -27,7 +27,8 @@ size=(img_size_x,img_size_y)
 target_resolution=(4,4)
 #label class name
 class_name='cap'
-#class_name='pz'
+
+zoom=0.5
 ################################################################
 #data paths
 ################################################################
@@ -38,12 +39,12 @@ base_dir='/scratch/st-rohling-1/contrastive_learning/'
 srt_dir='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/domain_specific_cl/'
 
 #Path to data in original dimensions in default resolution
-data_path_pretr='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/data/unlabelled/'
-data_path_tr='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/data/Task002_KidneyRegions/'
+data_path_pretr='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled/'
+data_path_tr='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/Task002_KidneyRegions/'
 
 #Path to data in cropped dimensions in target resolution (saved apriori)
-data_path_pretr_cropped='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/data/unlabelled_cropped/'
-data_path_tr_cropped='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/data/Task002_KidneyRegions_Cropped/'
+data_path_pretr_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled_cropped/'
+data_path_tr_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/Task002_KidneyRegions_Cropped/'
 ################################################################
 
 ################################################################

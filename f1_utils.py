@@ -1,4 +1,5 @@
 import matplotlib
+import os
 matplotlib.use('Agg')
 
 import matplotlib.pyplot as plt
@@ -323,6 +324,35 @@ class f1_utilsObj:
 
         return mean_f1_val_prev,mp_best,mean_total_cost_val,mean_f1
 
+    def net_inference(self, val_list,sess,ae,dt,orig_img_dt,save_dir_tmp,dataset):
+        count=0
+        mean_20subjs_dsc=[]
+
+        save_dir_tmp = os.path.join(save_dir_tmp,dataset)
+        pathlib.Path(save_dir_tmp).mkdir(parents=True, exist_ok=True)
+
+        # Load each test image and infer the predicted segmentation mask and compute Dice scores
+        for test_id in val_list:
+            test_id_l=[test_id]
+
+            #load image,label pairs and process it to chosen resolution and dimensions
+            img_sys,label_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1)
+            cropped_img_sys,cropped_mask_sys = dt.preprocess_data(img_sys, label_sys, pixel_size)
+            img_crop_re=np.swapaxes(cropped_img_sys,1,2)
+            img_crop_re=np.swapaxes(img_crop_re,0,1)
+
+            # Calc dice score / F1 score and predicted segmentation
+            pred_sf_mask = self.calc_pred_mask_batchwise(sess, ae, img_crop_re)
+            re_pred_mask_sys,dsc_val = self.reshape_img_and_f1_score(pred_sf_mask, label_sys, pixel_size)
+            print('test id, mean DSC', test_id, dsc_val)
+
+            # Plot some slices of the image, GT mask & predicted mask for test image
+            #self.plot_predicted_seg_ss(img_sys,label_sys,re_pred_mask_sys,seg_model_dir,test_id)
+
+            # Save the predicted segmentation mask in nifti format
+            array_img = nib.Nifti1Image(re_pred_mask_sys.astype(np.int16), affine_tst)
+            pred_filename =  os.path.join(str(save_dir_tmp), str(test_id)+'.nii.gz')
+            nib.save(array_img, pred_filename)
 
     def test_set_predictions(self, val_list,sess,ae,dt,orig_img_dt,save_dir_tmp):
         '''

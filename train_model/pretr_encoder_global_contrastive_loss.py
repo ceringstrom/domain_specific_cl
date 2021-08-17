@@ -32,7 +32,7 @@ parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 parser.add_argument('--lr_reg', type=float, default=0.001)
 
 #data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--data_aug', type=int, default=0, choices=[0,1])
+parser.add_argument('--data_aug', type=int, default=0, choices=[0,1,2]) #include zoom aug
 #version of run
 parser.add_argument('--ver', type=int, default=0)
 
@@ -40,7 +40,7 @@ parser.add_argument('--ver', type=int, default=0)
 parser.add_argument('--temp_fac', type=float, default=0.1)
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
 # Later, these re-sized images are used for pre-training using global contrastive loss.
-parser.add_argument('--bbox_dim', type=int, default=100)
+parser.add_argument('--bbox_dim', type=int, default=192)
 
 # type of global_loss_exp_no for global contrastive loss - used to pre-train the Encoder (e)
 # 0 - G^{R}  - default loss formulation as in simCLR (sample images in a batch from all volumes)
@@ -55,6 +55,9 @@ parser.add_argument('--n_iter', type=int, default=10001)
 
 #batch_size value - if global_loss_exp_no = 1, bt_size = 12; if global_loss_exp_no = 2, bt_size = 8
 parser.add_argument('--bt_size', type=int,default=12)
+
+#no of iterations to run
+parser.add_argument('--split', type=int, default=100)
 
 parse_config = parser.parse_args()
 #parse_config = parser.parse_args(args=[])
@@ -116,7 +119,7 @@ f1_util = f1_utilsObj(cfg,dt)
 
 ######################################
 #define directory to save the pre-training model of encoder
-save_dir=str(cfg.srt_dir)+'/models/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
 
 save_dir=str(save_dir)+'/bt_size_'+str(parse_config.bt_size)+'/'
 
@@ -143,6 +146,8 @@ print('load unlabeled volumes for pre-training')
 
 if(parse_config.global_loss_exp_no==0):
     unl_imgs=dt.load_cropped_img_labels(unl_list,label_present=0)
+elif(parse_config.global_loss_exp_no==3 or parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+    unl_imgs=dt.load_list_cropped_img_labels(unl_list,label_present=0)
 else:
     _,unl_imgs,_,_=load_val_imgs(unl_list,dt,orig_img_dt)
 ######################################
@@ -163,7 +168,10 @@ ae = model.encoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=pars
                         global_loss_exp_no=parse_config.global_loss_exp_no,n_parts=parse_config.n_parts)
 
 # define network/graph to apply random contrast and brightness on input images
-ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
+if (parse_config.global_loss_exp_no==3 or parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+    ae_rc = model.brit_cont_net(batch_size=2*cfg.batch_size_ft)
+else: 
+    ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
 ######################################
 
 ######################################
@@ -206,11 +214,17 @@ for epoch_i in range(start_epoch,n_epochs):
         # Each set is applied with different set of crop and intensity augmentation (aug) - brightness + distortion
     
         # Set 1 - random crop followed by random intensity aug
-        crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
         color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
     
         # Set 2 - different random crop followed by random intensity aug
-        crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        if parse_config.data_aug==2:
+            crop_batch2 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        else:
+            crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
         color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
     
         # Stitch these 2 augmented sets into 1 batch for pre-training
@@ -277,7 +291,17 @@ for epoch_i in range(start_epoch,n_epochs):
         # (c) Set 2 of original images batch (different to set 1)
         # (d) Set 2's 2 different augmented versions concatenated (aug_batch2)
         cat_batch=stitch_batch_global_loss_gd(cfg,img_batch,aug_batch1,img_batch_t2,aug_batch2,n_parts)
-
+    elif(parse_config.global_loss_exp_no==3):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch = sample_minibatch_for_global_loss_opti_cine(unl_imgs,cfg,cfg.batch_size_ft,n_parts)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
     elif (parse_config.global_loss_exp_no == 4):
         #########################
         # G^{D} - as in (1) + additionally match positive image to corresponding slice from similar partition in another volume
@@ -298,10 +322,18 @@ for epoch_i in range(start_epoch,n_epochs):
         # Each set is applied with different set of crop and intensity augmentation (aug) - brightness + distortion
 
         # Aug Set 1 - crop followed by intensity aug
-        crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
         color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
         # Set 2
-        crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+        if parse_config.data_aug==2:
+            crop_batch2 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        else:
+            crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
+
+            
         color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
 
         # Set 2 of original images batch sampled from unlabeled images (Different to Set 1)
@@ -325,9 +357,37 @@ for epoch_i in range(start_epoch,n_epochs):
         # (d) Set 2's 2 different augmented versions concatenated (aug_batch2)
         cat_batch = stitch_batch_global_loss_gdnew(cfg, img_batch, color_batch1, color_batch2, img_batch_t2, color_batch3, color_batch4, n_parts)
 
+    elif (parse_config.global_loss_exp_no == 5):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=False)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
+    elif (parse_config.global_loss_exp_no == 6):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=True)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
     #Run optimizer update on the training unlabeled data
-    train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_reg']],\
-                                     feed_dict={ae['x']:cat_batch,ae['train_phase']:True})
+    if (parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+        train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_reg']],\
+                                        feed_dict={ae['x']:cat_batch,ae['train_phase']:True,ae['y_l']:labels})
+    else:
+        train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_reg']],\
+                                        feed_dict={ae['x']:cat_batch,ae['train_phase']:True})
 
     if(epoch_i%cfg.val_step_update==0):
         train_writer.add_summary(train_summary, epoch_i)
@@ -337,15 +397,13 @@ for epoch_i in range(start_epoch,n_epochs):
         wandb.tensorflow.log(tf.summary.merge_all())
         wandb.log({"loss": tr_loss})
 
-
-    if ((epoch_i==n_epochs-1)):
-        # model saved at the last epoch of training
-        mp = str(save_dir) + str(checkpoint_filename) + '_epochs_' + str(epoch_i) + ".ckpt"
-        saver.save(sess, mp)
-        try:
-            mp_best
-        except NameError:
-            mp_best=mp
+# model saved at the last epoch of training
+mp = str(save_dir) + str(checkpoint_filename) + '_epochs_' + str(epoch_i) + ".ckpt"
+saver.save(sess, mp)
+try:
+    mp_best
+except NameError:
+    mp_best=mp
             
 print('pre-training completed')
 ######################################

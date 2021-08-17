@@ -5,11 +5,11 @@ import os
 import random
 import json
 
-unlabelled_dir = "/scratch/st-rohling-1/constrastive_learning/simclr_contrastive_learning/cleaned_images/"
+unlabelled_dir = "/arc/project/st-rohling-1/data/kidney/cleaned_anonymized_kidney_images/included/"
 img_dir = "/arc/project/st-rohling-1/data/kidney/cleaned_annotated_images/"
 label_dir = "/arc/project/st-rohling-1/data/kidney/masks_jr/"
-split_file = "/scratch/st-rohling-1/constrastive_learning/domain_specific_cl/test_cases.json"
-destination_dir = "/scratch/st-rohling-1/constrastive_learning/domain_specific_cl/data/"
+split_file = "/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/split.json"
+destination_dir = "/arc/project/st-rohling-1/data/kidney/dscl_data/"
 
 def convert_2d_image_to_nifti(input_filename: str, output_filename_truncated: str, spacing=(999, 1, 1),
                               transform=None, is_grayscale: bool = False) -> None:
@@ -53,11 +53,12 @@ def convert_unlabelled_images(input_dir, output_dir):
     filenames = []
 
     for filename in os.listdir(input_dir):
+        # print(filename)
         if filename[-3:] == "png":
             unique_name = filename[:-4]
             input_image_file = os.path.join(input_dir, filename)
             output_image_file = os.path.join(output_dir, unique_name)
-            convert_2d_image_to_nifti(input_image_file, output_image_file, is_grayscale=True)
+            # convert_2d_image_to_nifti(input_image_file, output_image_file, is_grayscale=True)
             filenames.append(unique_name)
     return filenames
 
@@ -67,8 +68,8 @@ def convert_images_from_list(images, input_dir, output_dir):
     
     filenames = []
     for image in images:
-        unique_name = image[:-4]
-        input_image_file = os.path.join(input_dir, image)
+        unique_name = image
+        input_image_file = os.path.join(input_dir, image + ".png")
         output_image_file = os.path.join(output_dir, unique_name)
         if os.path.exists(input_image_file):
             convert_2d_image_to_nifti(input_image_file, output_image_file, is_grayscale=True)
@@ -84,8 +85,9 @@ if __name__ == '__main__':
 
     with open(split_file, "r") as fp:
         all_cases = json.load(fp)
-    training_cases = all_cases["train"]
-    testing_cases = all_cases["test"]
+    print(all_cases.keys())
+    training_cases = all_cases['1']["train"] + all_cases['1']["val"]
+    testing_cases = all_cases['1']["test"]
     
     file_dict = {}
 
@@ -97,17 +99,15 @@ if __name__ == '__main__':
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-    file_dict["pretrain"] = convert_unlabelled_images(unlabelled_dir, unlabelled_output_dir)
+    # file_dict["pretrain"] = convert_unlabelled_images(unlabelled_dir, unlabelled_output_dir)
+    print(training_cases)
     imagesTr = convert_images_from_list(training_cases, img_dir, imagesTr_cap)
     convert_images_from_list(training_cases, img_dir, imagesTr_reg)
     convert_images_from_list(training_cases, os.path.join(label_dir, "capsule"), labelsTr_cap)
     convert_images_from_list(training_cases, os.path.join(label_dir, "regions"), labelsTr_reg)
 
-    random.shuffle(imagesTr)
-    val_cases = imagesTr[0:len(testing_cases)]
-    training_cases = imagesTr[len(testing_cases):]
-    file_dict["train"] = training_cases
-    file_dict["validation"] = val_cases
+    file_dict["train"] = all_cases['1']["train"]
+    file_dict["val"] = all_cases['1']["val"]
 
 
     imagesTs_cap = os.path.join(destination_dir, "Task001_KidneyCapsule", "imagesTs")
@@ -116,5 +116,5 @@ if __name__ == '__main__':
         if not os.path.exists(directory):
             os.makedirs(directory)
     file_dict["test"] = convert_images_from_list(testing_cases, img_dir, imagesTs_cap)
-    with open(os.path.join(destination_dir, "split.json"), 'w') as fp:
-        json.dump(file_dict, fp)
+    # with open(os.path.join(destination_dir, "split.json"), 'w') as fp:
+    #     json.dump(file_dict, fp)

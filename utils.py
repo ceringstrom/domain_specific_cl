@@ -1,11 +1,16 @@
 import numpy as np
 import scipy.ndimage.interpolation
+from scipy.stats import halfnorm
 
 from skimage import transform
+from skimage.measure import label
+from skimage.morphology import convex_hull_image
 import random
 
 import os
 import re
+import cv2
+import math
 
 
 def augmentation_function(ip_list, dt, labels_present=1, en_1hot=0):
@@ -399,19 +404,27 @@ def get_chkpt_file(model_path,match_name='',min_ep=10):
         for filename in fileList:
             if ".meta" in filename.lower():
                 numbers = re.findall('\d+',filename)
+                print(filename)
+                print(numbers)
+                if numbers:
+                    numbers = numbers
+                else:
+                    numbers = [0]
                 #print('model_path',model_path,filename)
                 #print('0',filename,numbers,numbers[0],min_ep)
                 #print('match name',match_name)
+                chkpt_max=os.path.join(dirName,filename)
                 if(isNotEmpty(match_name)):
                     if(match_name in filename and '00000-of-00001' not in filename and int(numbers[0])>min_ep):
                         print('1')
                         chkpt_max=os.path.join(dirName,filename)
-                        min_ep=int(numbers[0])
                 elif(int(numbers[0])>min_ep):
                     print('2')
                     chkpt_max=os.path.join(dirName,filename)
                     min_ep=int(numbers[0])
+
     # print(chkpt_max)
+    # chkpt_max=os.path.join(model_path,"train_decoder_wgts_kidney_cap_epochs_999.ckpt.meta")
     fin_chkpt_max = re.sub('\.meta$', '', chkpt_max)
     #print(fin_chkpt_max)
     return fin_chkpt_max
@@ -579,6 +592,43 @@ def crop_batch(ip_list,cfg,batch_size,box_dim=100,box_dim_y=100,low_val=10,high_
     else:
         return ld_img_re_bs
 
+def find_mask(img, threshold=1/800, index=-2):
+    v = img
+    # print(img.shape)
+    diff_mean = (np.clip(v, 0, 1))
+    # find connected components after threshold
+    cc = label(diff_mean > threshold)
+    v, c = np.unique(cc, return_counts=True)
+    # find second largest connect component (largest is the background)
+    second_largest_component = v[c.tolist().index(sorted(c)[index])]
+
+    # take convex hull to remove small gaps
+    # noinspection PyTypeChecker
+    return convex_hull_image(np.where(cc == second_largest_component, 1, 0))
+
+def zoom_batch(ip_list,cfg,batch_size):
+    # print("ZOOM")
+    zoom_scale = halfnorm.rvs(loc=1, scale=cfg.zoom, size=batch_size)
+    zoomed_batch=np.zeros_like(ip_list)
+    for i in range(batch_size):
+        img = ip_list[i]
+        scale = zoom_scale[i]
+        img = np.squeeze(img)
+        mask = find_mask(img)
+        # mask = mask_list[i]
+        com = scipy.ndimage.measurements.center_of_mass(mask)
+        img_shape = img.shape
+        r_offset = min(max(0, int((scale * com[0] - img.shape[0]) / 2)), int((scale-1) * img.shape[0]))
+        c_offset = min(max(0, int((scale * com[1] - img.shape[1]) / 2)), int((scale-1) * img.shape[1]))
+
+        zoomed = scipy.ndimage.zoom(img, scale)
+
+        new_image = mask * zoomed[r_offset:r_offset + img.shape[0], c_offset:c_offset + img.shape[1]]
+        new_image = np.expand_dims(new_image, axis=2)
+
+        zoomed_batch[i] = new_image
+
+    return zoomed_batch
 
 def create_inpaint_box(ld_img_batch,cfg,batch_size,box_dim=100,only_center_box=0):
     '''
@@ -724,6 +774,72 @@ def context_restoration(ld_img_batch,cfg,batch_size=10,patch_dim=5,N=10):
                 #print('count',count)
                 break
     return ld_img_batch_fin
+
+def unscaled_gaussian(x, spread):
+    return math.exp(-x**2/(2 * spread**2))
+
+
+def sample_minibatch_for_global_loss_opti_cine(img_list,cfg,batch_sz,n_parts):
+    '''
+    Create a batch with '(2 * batch_sz) * n_vols' no. of 2D images where n_vols is no. of 3D volumes and n_parts is no. of partitions per volume.
+    input param:
+         img_list: input batch of 3D cines
+         cfg: config parameters
+         batch_sz: final batch size
+         n_cines: number of cines
+         n_parts: size of partitions
+    return:
+         fin_batch: swapped batch of 2D images.
+    '''
+
+    #select indexes of 'm' cines out of total M.
+    im_ns=random.sample(range(0, len(img_list)), batch_sz)
+    fin_batch=np.zeros((2*batch_sz,cfg.img_size_x,cfg.img_size_y,cfg.num_channels))
+    #print(im_ns)
+    count = 0
+    for vol_index in im_ns:
+        #print('j',j)
+        #if n_parts=4, then for each volume: create 4 partitions, pick 4 samples overall (1 from each partition randomly)
+        im_v=img_list[vol_index]
+        i_sel=random.sample(range(n_parts, im_v.shape[2]-n_parts), 1)[0]
+        pair_options = list(range(i_sel-n_parts, i_sel+n_parts+1))
+        pair_options.remove(i_sel)
+        i_pair_sel = random.sample(pair_options, 1)[0]
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_sel], axis=2)
+        count = count+1
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_pair_sel], axis=2)
+        count = count+1
+
+    return fin_batch
+
+def sample_minibatch_for_contrastive_loss_opti(img_list,cfg,batch_sz,spread,softened=False):
+    #other idea to only select from the one and just use the
+    labels = np.random.randint(0, 2, size=batch_sz)
+    labels = labels.astype("float")
+    fin_batch=np.zeros((2*batch_sz,cfg.img_size_x,cfg.img_size_y,cfg.num_channels))
+    for i in range(batch_sz):
+        label = labels[i]
+        if label:
+            vol_ind = random.sample(range(0, len(img_list)), 1)[0]
+            vol = img_list[vol_ind]
+            frame_idx_1 = random.sample(range(spread, vol.shape[2]-spread), 1)[0]
+            frame_idx_2 = random.sample(range(frame_idx_1-spread, frame_idx_1+spread), 1)[0]
+            if softened:
+                labels[i] = 1 - abs(frame_idx_1-frame_idx_2) / spread
+            fin_batch[i]=np.expand_dims(vol[:,:,frame_idx_1], axis=2)
+            fin_batch[i+batch_sz]=np.expand_dims(vol[:,:,frame_idx_2], axis=2)
+        else:
+            vol_ind = random.sample(range(0, len(img_list)), 2)
+            
+            vol1 = img_list[vol_ind[0]]
+            frame_idx = random.sample(range(0, vol1.shape[2]), 1)[0]
+            fin_batch[i]=np.expand_dims(vol1[:,:,frame_idx], axis=2)
+
+            vol2 = img_list[vol_ind[1]]
+            frame_idx = random.sample(range(0, vol2.shape[2]), 1)[0]
+            fin_batch[i+batch_sz]=np.expand_dims(vol2[:,:,frame_idx], axis=2)
+    return fin_batch, labels
+        
 
 def sample_minibatch_for_global_loss_opti(img_list,cfg,batch_sz,n_vols,n_parts):
     '''
