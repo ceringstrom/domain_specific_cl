@@ -8,19 +8,63 @@ class lossObj:
     def __init__(self):
         print('loss init')
 
-    def dice_speckle_loss(self, logits, labels, distributions, alpha=0.5):
-        with tf.name_scope('dice_loss'):
-            dice_loss = dice_loss_with_backgrnd(logits, labels)
+    def heavyside_approx(self, x, coef=1, shift=0):
+        return 1 / (1 + tf.exp(-coef * (x-shift)))
 
-            
-            for i in range(1, 4):
-                masked_distribution = logits[:,:,:,i] * distributions # adjust dimensions here
-                indices = tf.where(tf.not_equal(masked_distribution, 0))
-                nonzero_entries = masked_distribution[indices]
-                nonzero_entries = tf.linalg.normalize(nonzero_entries)
-                std = tf.math.reduce_std(nonzero_entries)
+    def speckle_dice_loss(self, logits, labels, imgs, label_dists, bt_size, alpha=0.01, epsilon=1e-10):
+        dice_loss = self.dice_loss_with_backgrnd(logits, labels, epsilon=epsilon)
+        speckle_loss, debug = self.speckle_loss(logits, imgs, label_dists, bt_size)
+        # ce = self.pixel_wise_cross_entropy_loss(logits, labels)
+        # return alpha * dice_loss + (1-alpha) * speckle_loss
+        debug = []
+        debug.append(alpha * speckle_loss)
+        debug.append((1-alpha) * dice_loss)
+        # return dice_loss, debug
+        return (1-alpha) * dice_loss + alpha * speckle_loss, debug
 
+    def speckle_loss(self, logits, imgs, label_dists, bt_size):
+        loss = 0.0
+        other_loss = 0.0
+        predictions = tf.nn.softmax(logits)
+        label_dist_scaling = tf.reduce_mean(label_dists, axis=0)
+        with tf.name_scope('speckle_loss'):
+            for i in range(bt_size):
+                prediction = predictions[i]
+                img = imgs[i]
+                label_dist = label_dists[i]
+                prediction_masks = self.heavyside_approx(prediction, coef=20, shift=0.8)
+                # prediction_masks = tf.nn.relu(prediction - 0.5) * 2
 
+                for j in range(1, 4): # replace with number of classes at some point
+                    debug = []
+                    prediction_mask = tf.expand_dims(prediction_masks[:,:,j], -1)
+                    pixels = prediction_mask * img
+                    all_ex2 = tf.math.square(pixels)
+                    all_ex4 = tf.math.square(all_ex2)
+                    approx_num_pix = tf.reduce_sum(prediction_mask)
+                    e_x2 = tf.reduce_sum(all_ex2) / approx_num_pix
+                    e_x4 = tf.reduce_sum(all_ex4) / approx_num_pix
+                    nak_scale = e_x2
+                    
+                    if(( e_x4 - (e_x2**2)) == 0):
+                        nak_shape = 0.0
+                    else:
+                        nak_shape = e_x2**2 / ( e_x4 - (e_x2**2))
+                    nak_scale = tf.expand_dims(nak_scale, 0)
+                    nak_shape = tf.expand_dims(nak_shape, 0)
+                    # debug.append(nak_shape)
+                    # debug.append(nak_scale)
+                    # debug.append(tf.concat([nak_shape, nak_scale], axis=0) )
+                    # debug.append(label_dist[j-1])
+                    # debug.append(label_dist_scaling[j-1])
+
+                    # debug.append((tf.concat([nak_shape, nak_scale], axis=0) - label_dist[j-1]) / label_dist_scaling[j-1])
+                    # debug.append(label_dist)
+                    new_loss = tf.nn.l2_loss((tf.concat([nak_shape, nak_scale], axis=0) - label_dist[j-1]) / label_dist_scaling[j-1])
+                    # debug.append(new_loss)
+                    loss = loss + new_loss
+        return loss / bt_size, debug
+                    
 
     def dice_loss_with_backgrnd(self, logits, labels, epsilon=1e-10):
         '''
@@ -33,8 +77,8 @@ class lossObj:
         returns:
             loss: Dice loss with background
         '''
-        print(logits.shape)
-        print(labels.shape)
+        # print(logits.shape)
+        # print(labels.shape)
         with tf.name_scope('dice_loss'):
 
             prediction = tf.nn.softmax(logits)

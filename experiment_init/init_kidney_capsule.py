@@ -39,13 +39,14 @@ base_dir='/scratch/st-rohling-1/contrastive_learning/'
 srt_dir='/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/domain_specific_cl/'
 
 #Path to data in original dimensions in default resolution
-data_path_pretr='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled/'
+data_path_pretr='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled_single/'
 data_path_tr='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/Task001_KidneyCapsule/'
 
 
 #Path to data in cropped dimensions in target resolution (saved apriori)
-data_path_pretr_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled_cropped/'
+data_path_pretr_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled_cropped_single/'
 data_path_tr_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/Task001_KidneyCapsule_Cropped/'
+data_path_stats_cropped='/arc/project/st-rohling-1/data/kidney/CL_data/dscl_data/unlabelled_stats/'
 ################################################################
 
 ################################################################

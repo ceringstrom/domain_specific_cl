@@ -5,6 +5,7 @@ from scipy.stats import halfnorm
 from skimage import transform
 from skimage.measure import label
 from skimage.morphology import convex_hull_image
+from scipy.stats import nakagami
 import random
 
 import os
@@ -234,12 +235,18 @@ def shuffle_minibatch_mtask(ip_list, batch_size=20,num_channels=1,labels_present
             image_data_train_batch: concatenated 2D slices randomly chosen from the total input data
             label_data_train_batch: concatenated 2D slices of labels with indices corresponding to the input data selected.
         '''
+    is_speckle = False
 
     if(len(ip_list)==2 and labels_present==1):
         image_data_train = ip_list[0]
         label_data_train = ip_list[1]
     elif(len(ip_list)==1 and labels_present==0):
         image_data_train = ip_list[0]
+    elif(len(ip_list)==3):
+        image_data_train = ip_list[0]
+        label_data_train = ip_list[1]
+        speckle_data_train = ip_list[2]
+        is_speckle = True
 
     if(num_channels==1):
         img_size_x=image_data_train.shape[0]
@@ -262,20 +269,28 @@ def shuffle_minibatch_mtask(ip_list, batch_size=20,num_channels=1,labels_present
             img_train_tmp = np.reshape(image_data_train[index_no], (1, img_size_x, img_size_y, num_channels))
             if(labels_present==1):
                 label_train_tmp = np.reshape(label_data_train[index_no], (1, img_size_x, img_size_y))
+        if(is_speckle):
+            speckle_train_tmp = np.reshape(speckle_data_train[index_no], (1, 3, 2))
 
         if(count==0):
             image_data_train_batch=img_train_tmp
             if(labels_present==1):
                 label_data_train_batch=label_train_tmp
+            if(is_speckle):
+                speckle_data_train_batch = speckle_train_tmp
         else:
             image_data_train_batch=np.concatenate((image_data_train_batch, img_train_tmp),axis=0)
             if(labels_present==1):
                 label_data_train_batch=np.concatenate((label_data_train_batch, label_train_tmp),axis=0)
+            if(is_speckle):
+                speckle_data_train_batch = np.concatenate((speckle_data_train_batch, speckle_train_tmp), axis=0)
 
         count=count+1
         if(count==batch_size):
             break
-    if(labels_present==1):
+    if(is_speckle):
+        return image_data_train_batch, label_data_train_batch, speckle_data_train_batch
+    elif(labels_present==1):
         return image_data_train_batch, label_data_train_batch
     else:
         return image_data_train_batch
@@ -358,6 +373,50 @@ def load_val_imgs(val_list,dt,orig_img_dt):
         pixel_val_list.append(pixel_size_val)
 
     return val_label_orig,val_img_list,val_label_list,pixel_val_list
+
+def estimateNakagami(im):
+
+    #making arrays to compute expectations as per nakagami estimates
+    #careful for overflows, need to declare python int in case
+    
+    # im = im.astype(np.int64)
+    e_x2 = 0
+    e_x4 = 0
+    rows,cols = im.shape
+    N = rows*cols
+    for x in range(0,rows):
+        for y in range(0,cols):
+            e_x2 = e_x2 + (im[x,y])**2
+            e_x4 = e_x4 + (im[x,y])**4
+    if N > 0:     
+        e_x2 = e_x2 / N
+        e_x4 = e_x4 / N
+    else:
+        e_x2 = 0
+        e_x4 = 0
+    
+    nakScale = e_x2
+    #using inverse normalized variance esimator for Nakagami
+    if(( e_x4 - (e_x2**2)) == 0):
+        print("Setting 0")
+        nakShape = 0
+    else:
+        nakShape = e_x2**2 / ( e_x4 - (e_x2**2))
+    
+    return np.nan_to_num([nakShape, nakScale])
+
+def compute_img_distributions(img_list, label_list):
+    params = np.zeros((img_list.shape[-1], 3, 2))
+    for i in range(img_list.shape[-1]):
+        label = label_list[:, :, i]
+        img = img_list[:, :, i]
+        for j in range(1, 4):
+            mask = (label == j).astype("int8")
+            nonzero_indices = np.nonzero(mask)
+            values = np.expand_dims(img[nonzero_indices], axis=0)
+            if values.shape[1] != 0 :
+                params[i, j-1] = estimateNakagami(values)
+    return params
 
 def get_max_chkpt_file(model_path,min_ep=10):
     '''
@@ -609,12 +668,22 @@ def find_mask(img, threshold=1/800, index=-2):
 def zoom_batch(ip_list,cfg,batch_size):
     # print("ZOOM")
     zoom_scale = halfnorm.rvs(loc=1, scale=cfg.zoom, size=batch_size)
-    zoomed_batch=np.zeros_like(ip_list)
+    zoomed_batch = np.zeros_like(ip_list)
     for i in range(batch_size):
         img = ip_list[i]
+        scaled_img = img / np.max(img)
         scale = zoom_scale[i]
         img = np.squeeze(img)
-        mask = find_mask(img)
+        scaled_img = np.squeeze(scaled_img)
+        mask = find_mask(scaled_img)
+        total = np.product(mask.shape)
+        covering = mask.sum() / total
+        com = scipy.ndimage.measurements.center_of_mass(mask)
+
+        if covering < .15:
+            mask = find_mask(scaled_img, 1/800 / 2)
+        if covering > .9 or com[0] < mask.shape[0]/4:
+            mask = find_mask(scaled_img, 1/800, -1)
         # mask = mask_list[i]
         com = scipy.ndimage.measurements.center_of_mass(mask)
         img_shape = img.shape
@@ -629,6 +698,212 @@ def zoom_batch(ip_list,cfg,batch_size):
         zoomed_batch[i] = new_image
 
     return zoomed_batch
+
+def get_scanlines(img):
+    left_line = []
+    right_line = []
+
+    start_row = 0
+    h, w = img.shape
+    min_col = w
+    for i in range(h):
+        row = img[i, :]
+        if(np.count_nonzero(row)) > 1:
+            nonzero = row.nonzero()
+            if start_row==0:
+                start_row = i
+            if nonzero[0][0] < min_col:
+                min_col = nonzero[0][0]
+            if nonzero[0][0] > min_col + 5:
+                break
+            left_line.append(nonzero[0][0])
+            right_line.append(nonzero[0][-1])
+    y = np.arange(start_row, start_row+len(left_line))
+    left = np.polyfit(np.array(left_line),y,1)
+    right = np.polyfit(np.array(right_line),y,1)
+    xi = (left[1]-right[1])/(right[0]-left[0])
+    yi = left[0] * xi + left[1]
+
+    slopes = (left, right)
+    
+    radius = img.shape[0] - yi
+    center = left_line[0] + (right_line[0] - left_line[0])/2
+
+    return center, radius, -yi, slopes
+
+def get_triangle_mask(img_shape, center, radius, buffer, slopes, width=(0, 0.2)):
+    h, w = img_shape
+    
+    m1 = slopes[0][0]
+    m2 = slopes[1][0]
+    
+    theta_low = min(np.arctan(1/m1), np.arctan(1/m2))
+    theta_high = max(np.arctan(1/m1), np.arctan(1/m2))
+    
+    if width[1] > theta_high - theta_low:
+        width[1] = theta_high - theta_low
+    
+    width = np.random.uniform(low=width[0], high=width[1], size=1)
+    position = np.random.uniform(low=theta_low+width/2, high=theta_high-width/2, size=1)
+    
+    low_slope = 1/np.tan(position-width/2)
+    high_slope = 1/np.tan(position+width/2)
+    
+    low_intercept = -buffer - low_slope * center
+    high_intercept = -buffer - high_slope * center
+    
+    lines = [(low_slope[0], low_intercept[0]), (high_slope[0], high_intercept[0])]
+    contours = []
+    for (slope, intercept) in lines:
+        bottom_intercept = (h-intercept) / slope
+        if intercept >= 0 and intercept <= h:
+            contours.append([0, intercept])
+        elif(bottom_intercept >= 0 and bottom_intercept <= w):
+            contours.append([bottom_intercept, h])
+        else:
+            contours.append([w, slope * w + intercept])
+    contours.append([-lines[1][1] / lines[1][0], 0])
+    contours.append([-lines[0][1] / lines[0][0], 0])
+    mask = np.zeros((h, w))
+    cv2.fillPoly(mask, pts = [np.array(contours, dtype=np.int32)], color=(1))
+    return mask
+
+def get_bounded_nakagami(length, shape, scale, min_val=0, max_val=255):
+    vals = np.zeros(length)
+    for i in range(length):
+        val = -1
+        while val < min_val or val > max_val:
+            val = nakagami.rvs(shape, scale=scale, size=1)
+        vals[i] = val
+    return vals
+
+def shadow_batch(ip_list,cfg,batch_size):
+    shadowed_batch = np.zeros_like(ip_list)
+    for i in range(batch_size):
+        img = ip_list[i]
+        img = np.squeeze(img)
+        img = np.swapaxes(img, 0, 1)
+        try:
+            # cv2.imwrite("test_{}.png".format(i), (img*255/ np.max(img)).astype("int8"))
+            center, radius, buffer, slopes = get_scanlines(img*255)
+            top = (img[:, int(center)]!=0).argmax() + int(buffer)
+            mask = get_triangle_mask(img.shape, center, radius, int(buffer), slopes)
+            num_pix = int(mask.sum())
+            nak = get_bounded_nakagami(num_pix, 0.202, 189.3, min_val=0, max_val=255) / 255 * np.max(img)
+            masked_image = img.copy()
+            masked_image[np.where(mask != 0)] = nak
+            outer_mask = find_mask(img, index=-2)
+            masked_image = masked_image * outer_mask
+        except Exception as e:
+            masked_image = img
+        # cv2.imwrite("test2_{}.png".format(i), (masked_image*255/ np.max(img)).astype("int8"))
+        masked_image = np.swapaxes(masked_image, 0, 1)
+        masked_image = np.expand_dims(masked_image, axis=-1)
+        shadowed_batch[i] = masked_image
+    return shadowed_batch
+
+def depth_batch(ip_list,cfg,batch_size):
+    zoom_scale = halfnorm.rvs(loc=1, scale=cfg.zoom, size=batch_size)
+    zoomed_batch = np.zeros_like(ip_list)
+    for i in range(batch_size):
+        img = ip_list[i]
+        img = np.swapaxes(img, 0, 1)
+        # print(img.shape)
+        # cv2.imwrite("test_{}.png".format(i), (img*255/ np.max(img)).astype("int8"))
+        scaled_img = img / np.max(img)
+        scale = zoom_scale[i]
+        img = np.squeeze(img)
+        scaled_img = np.squeeze(scaled_img)
+        mask = find_mask(scaled_img)
+        total = np.product(mask.shape)
+        covering = mask.sum() / total
+        com = scipy.ndimage.measurements.center_of_mass(mask)
+
+        if covering < .15:
+            mask = find_mask(scaled_img, 1/800 / 2)
+        if covering > .9 or com[0] < mask.shape[0]/4:
+            mask = find_mask(scaled_img, 1/800, -1)
+        # mask = mask_list[i]
+        com = scipy.ndimage.measurements.center_of_mass(mask)
+        img_shape = img.shape
+        # r_offset = min(max(0, int(scale * com[0] - img.shape[0] / 2)), zoomed.shape[0] - img.shape[0])
+
+        zoomed = scipy.ndimage.zoom(img, scale, order=5, mode="mirror")
+        # print("com", com)
+        img_top = np.nonzero(img[:, int(com[1])])[0][0]
+        zoom_top = np.nonzero(zoomed[:, int(com[1]*scale)])[0][0]
+
+        c_offset = min(max(0, int(scale * com[1] - img.shape[1] / 2)), zoomed.shape[1] - img.shape[1])
+        r_offset = int((scale-1) *  img_top)
+
+        # print("zoomed")
+        # print(np.max(img), np.min(img))
+        # print(np.max(zoomed), np.min(zoomed))
+        # print(c_offset)
+        # print(r_offset, zoom_top, img_top, scale)
+
+        new_image = mask * zoomed[r_offset:r_offset + img.shape[0], c_offset:c_offset + img.shape[1]]
+        new_image = np.expand_dims(new_image, axis=2)
+
+        # cv2.imwrite("test2_{}.png".format(i), (new_image*255/ np.max(new_image)).astype("int8"))
+
+        new_image = np.swapaxes(new_image, 0, 1)
+
+        zoomed_batch[i] = new_image
+
+    return zoomed_batch
+
+def apply_tgc(usimg, center, radius, buffer, regions=2, gain_range=(0.5, 2)):
+    img = usimg.copy()
+    maxval = np.max(img)
+    gains = np.random.uniform(gain_range[0], gain_range[1], regions)
+    # print(gains)
+    nz_indices = np.nonzero(img)
+    # print(np.sum(img==0.0))
+    # cv2.imwrite("tgain.png", (img==0).astype("uint8")*255)
+    radii = np.sqrt(np.square(nz_indices[0] + buffer) + np.square(nz_indices[1] - center))
+    lower_limit = np.min(radii)
+    upper_limit = np.max(radii)
+    region_size = (upper_limit-lower_limit) / regions
+    gain_array = np.zeros(radii.shape)
+    # print((gain_array.dtype))
+    current_pos = lower_limit
+    for i in range(regions):
+        gain_array[np.where(radii > current_pos)] = gains[i]
+        current_pos += region_size
+    # print("gains", np.max(gain_array), np.min(gain_array))
+    # print(img.dtype)
+    # img[nz_indices] = gain_array
+    # cv2.imwrite("gain.png", (img*255/np.max(gains)).astype("uint8"))
+    # print("monmax")
+    # print(np.unique((img*255/np.max(gains)).astype("uint8"))) #, np.min((img*255/np.max(gains)).astype("uint8")))
+    img[nz_indices] = gain_array * img[nz_indices]
+    # print(np.unique(img).shape)
+    img[img > maxval] = maxval
+    return img
+
+def tgc_batch(ip_list,cfg,batch_size):
+    tgc_batch = np.zeros_like(ip_list)
+    for i in range(batch_size):
+        # print(i)
+        img = ip_list[i]
+        img = np.squeeze(img)
+        img = np.swapaxes(img, 0, 1)
+        try:
+            # cv2.imwrite("tdest_{}.png".format(i), (img*255/ np.max(img)).astype("uint8"))
+            
+            center, radius, buffer, slopes = get_scanlines(img*255)
+            # print(center, radius, buffer, slopes)
+            gain_image = apply_tgc(img, center, radius, buffer, regions=10)
+        except Exception as e:
+            gain_image = img
+        # print("uni", np.unique(gain_image*255.0/ np.max(gain_image)).astype("uint8"))
+        # cv2.imwrite("tdest2_{}.png".format(i), (gain_image*255.0/ np.max(gain_image)).astype("uint8"))
+        # print(np.max(), np.min())
+        gain_image = np.swapaxes(gain_image, 0, 1)
+        gain_image = np.expand_dims(gain_image, axis=-1)
+        tgc_batch[i] = gain_image
+    return tgc_batch
 
 def create_inpaint_box(ld_img_batch,cfg,batch_size,box_dim=100,only_center_box=0):
     '''
@@ -798,8 +1073,6 @@ def sample_minibatch_for_global_loss_opti_cine(img_list,cfg,batch_sz,n_parts):
     #print(im_ns)
     count = 0
     for vol_index in im_ns:
-        #print('j',j)
-        #if n_parts=4, then for each volume: create 4 partitions, pick 4 samples overall (1 from each partition randomly)
         im_v=img_list[vol_index]
         i_sel=random.sample(range(n_parts, im_v.shape[2]-n_parts), 1)[0]
         pair_options = list(range(i_sel-n_parts, i_sel+n_parts+1))
@@ -810,6 +1083,50 @@ def sample_minibatch_for_global_loss_opti_cine(img_list,cfg,batch_sz,n_parts):
         fin_batch[count]=np.expand_dims(im_v[:,:,i_pair_sel], axis=2)
         count = count+1
 
+    return fin_batch
+
+def sample_minibatch_for_global_loss_opti_cine_hn(img_list,cfg,batch_sz,n_parts):
+    '''
+    Create a batch with '(2 * batch_sz) * n_vols' no. of 2D images where n_vols is no. of 3D volumes and n_parts is no. of partitions per volume.
+    input param:
+         img_list: input batch of 3D cines
+         cfg: config parameters
+         batch_sz: final batch size
+         n_cines: number of cines
+         n_parts: size of partitions
+    return:
+         fin_batch: swapped batch of 2D images.
+    '''
+
+    #select indexes of 'm' cines out of total M.
+    print(len(img_list))
+    print(range(0, len(img_list)))
+    print(batch_sz)
+    im_ns=random.sample(range(0, len(img_list)), int(batch_sz / 2))
+    fin_batch=np.zeros((2*batch_sz,cfg.img_size_x,cfg.img_size_y,cfg.num_channels))
+    #print(im_ns)
+    count = 0
+    for vol_index in im_ns:
+        im_v=img_list[vol_index]
+        i_sel=random.sample(range(n_parts, im_v.shape[2]-n_parts), 1)[0]
+        pair_options = list(range(i_sel-n_parts, i_sel+n_parts+1))
+        pair_options.remove(i_sel)
+        i_pair_sel = random.sample(pair_options, 1)[0]
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_sel], axis=2)
+        count = count+1
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_pair_sel], axis=2)
+        count = count+1
+        possible_include = list(range(n_parts, im_v.shape[2]-n_parts))
+        possible_exclude = list(range(max(0, i_sel-3*n_parts), min(im_v.shape[2]-n_parts, i_sel+3*n_parts+1)))
+        possible_i = [x for x in possible_include if x not in possible_exclude]
+        i_sel_2 = random.sample(possible_i, 1)[0]
+        pair_options_2 = list(range(i_sel_2-n_parts, i_sel_2+n_parts+1))
+        pair_options_2.remove(i_sel_2)
+        i_pair_sel_2 = random.sample(pair_options_2, 1)[0]
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_sel_2], axis=2)
+        count = count+1
+        fin_batch[count]=np.expand_dims(im_v[:,:,i_pair_sel_2], axis=2)
+        count = count+1
     return fin_batch
 
 def sample_minibatch_for_contrastive_loss_opti(img_list,cfg,batch_sz,spread,softened=False):
@@ -823,7 +1140,7 @@ def sample_minibatch_for_contrastive_loss_opti(img_list,cfg,batch_sz,spread,soft
             vol_ind = random.sample(range(0, len(img_list)), 1)[0]
             vol = img_list[vol_ind]
             frame_idx_1 = random.sample(range(spread, vol.shape[2]-spread), 1)[0]
-            frame_idx_2 = random.sample(range(frame_idx_1-spread, frame_idx_1+spread), 1)[0]
+            frame_idx_2 = random.sample(range(frame_idx_1-spread, frame_idx_1+spread+1), 1)[0]
             if softened:
                 labels[i] = 1 - abs(frame_idx_1-frame_idx_2) / spread
             fin_batch[i]=np.expand_dims(vol[:,:,frame_idx_1], axis=2)
@@ -840,6 +1157,60 @@ def sample_minibatch_for_contrastive_loss_opti(img_list,cfg,batch_sz,spread,soft
             fin_batch[i+batch_sz]=np.expand_dims(vol2[:,:,frame_idx], axis=2)
     return fin_batch, labels
         
+def sample_minibatch_for_contrastive_loss_opti_hn(img_list,cfg,batch_sz,spread,softened=False):
+    #other idea to only select from the one and just use the
+    labels = np.random.randint(0, 3, size=batch_sz)
+    labels = labels.astype("float")
+    fin_batch=np.zeros((2*batch_sz,cfg.img_size_x,cfg.img_size_y,cfg.num_channels))
+    for i in range(batch_sz):
+        print(i)
+        label = labels[i]
+        print(label)
+        if label==1:
+            print("LABEL 1")
+            vol_ind = random.sample(range(0, len(img_list)), 1)[0]
+            print(vol_ind)
+            vol = img_list[vol_ind]
+            print(vol.shape)
+            frame_idx_1 = random.sample(range(spread, vol.shape[2]-spread), 1)[0]
+            frame_idx_2 = random.sample(range(frame_idx_1-spread, frame_idx_1+spread+1), 1)[0]
+            print(frame_idx_1, frame_idx_2)
+            if softened:
+                labels[i] = 1 - abs(frame_idx_1-frame_idx_2) / spread
+            print(labels[i])
+            print(fin_batch.shape)
+            fin_batch[i]=np.expand_dims(vol[:,:,frame_idx_1], axis=2)
+            fin_batch[i+batch_sz]=np.expand_dims(vol[:,:,frame_idx_2], axis=2)
+        elif label==2:
+            print("LABEL 2")
+            vol_ind = random.sample(range(0, len(img_list)), 2)
+            
+            vol1 = img_list[vol_ind[0]]
+            frame_idx = random.sample(range(0, vol1.shape[2]), 1)[0]
+            fin_batch[i]=np.expand_dims(vol1[:,:,frame_idx], axis=2)
+            print(frame_idx)
+            include = list(range(0, vol1.shape[2]))
+            exclude = list(range(frame_idx-spread, frame_idx+spread+1))
+            possible_idx = [x for x in include if x not in exclude]
+
+            frame_idx = random.sample(possible_idx, 1)[0]
+            print(frame_idx)
+            fin_batch[i+batch_sz]=np.expand_dims(vol1[:,:,frame_idx], axis=2)
+            labels[i] = 0
+            print(labels[i] )
+        else:
+            print("LABEL 0")
+            vol_ind = random.sample(range(0, len(img_list)), 2)
+            print(vol_ind)
+            vol1 = img_list[vol_ind[0]]
+            frame_idx = random.sample(range(0, vol1.shape[2]), 1)[0]
+            fin_batch[i]=np.expand_dims(vol1[:,:,frame_idx], axis=2)
+
+            vol2 = img_list[vol_ind[1]]
+            frame_idx = random.sample(range(0, vol2.shape[2]), 1)[0]
+            fin_batch[i+batch_sz]=np.expand_dims(vol2[:,:,frame_idx], axis=2)
+            print(labels[i])
+    return fin_batch, labels
 
 def sample_minibatch_for_global_loss_opti(img_list,cfg,batch_sz,n_vols,n_parts):
     '''

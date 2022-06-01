@@ -91,7 +91,7 @@ class modelObj:
         # print(x2.shape)
         d = tf.reduce_sum(tf.square(x1 - x2))
         d_sqrt = tf.sqrt(d)
-        loss = 0.5 * ((1-y) * d + y * tf.square(tf.math.maximum(0.0, margin-d)))
+        loss = 0.5 * ((y) * d + (1-y) * tf.square(tf.math.maximum(0.0, margin-d)))
         return loss
 
     def encoder_network(self,x,train_phase,no_filters,encoder_list_return=0):
@@ -155,7 +155,7 @@ class modelObj:
         # placeholders for the network Inputs
         x = tf.placeholder(tf.float32, shape=[None, self.img_size_x, self.img_size_y, num_channels], name='x')
         train_phase = tf.placeholder(tf.bool, name='train_phase')
-        if(global_loss_exp_no==5 or global_loss_exp_no==6):
+        if(global_loss_exp_no in [5, 6, 8, 9]):
             y_l = tf.placeholder(tf.float32, shape=self.batch_size, name='y_l')
         else:
             y_l = None
@@ -414,7 +414,7 @@ class modelObj:
                     den_i4_i2_ss=self.cos_sim(x_num_i4, x_den, temp_fac)
                     num_i4_i2_loss=-tf.log(tf.exp(num_i2_i4_ss)/(tf.exp(num_i2_i4_ss)+tf.math.reduce_sum(tf.exp(den_i4_i2_ss))))
                     net_global_loss = net_global_loss + num_i4_i2_loss
-        elif(global_loss_exp_no==3):
+        elif(global_loss_exp_no==3 or global_loss_exp_no==7):
             bs=4*self.batch_size
 
             for pos_index in range(0,bs,4):
@@ -685,7 +685,7 @@ class modelObj:
                     den_i6_i3_ss=self.cos_sim(x_num_i6, x_den, temp_fac)
                     num_i6_i3_loss=-tf.log(tf.exp(num_i3_i6_ss)/(tf.exp(num_i3_i6_ss)+tf.math.reduce_sum(tf.exp(den_i6_i3_ss))))
                     net_global_loss = net_global_loss + num_i6_i3_loss
-        elif(global_loss_exp_no==5 or global_loss_exp_no==6):
+        elif(global_loss_exp_no in [5, 6, 8, 9]):
             for index in range(0,self.batch_size,1):
                 num_i1=np.arange(index,index+1,dtype=np.int32)
                 num_i2=np.arange(self.batch_size+index,self.batch_size+index+1,dtype=np.int32)
@@ -768,6 +768,11 @@ class modelObj:
             y_l = tf.placeholder(tf.float32, shape=[None, self.img_size_x, self.img_size_y,self.num_classes], name='y_l')
         else:
             y_l = tf.placeholder(tf.int32, shape=[None, self.img_size_x, self.img_size_y], name='y_l')
+
+        if(dsc_loss==3):
+            label_dists = tf.placeholder(tf.float32, shape=[None, self.num_classes-1, 2], name='label_dists')
+        else:
+            label_dists = None
         train_phase = tf.placeholder(tf.bool, name='train_phase')
 
         if(en_1hot==0):
@@ -791,34 +796,35 @@ class modelObj:
         # Decoder network - Upsampling Path
         ###################################
         scale_fac=2
+        
         dec_c6_up = layers.upsample_layer(ip_layer=enc_c6_b, method=self.interp_val, scale_factor=int(scale_fac))
         #print('dec 2 large up',dec_c6_up)
         dec_dc6 = layers.conv2d_layer(ip_layer=dec_c6_up,name='dec_dc6', kernel_size=(fs_de,fs_de),num_filters=no_filters[5], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_cat_c6 = tf.concat((dec_dc6,enc_c5_b),axis=3,name='dec_cat_c6')
         dec_c5_a = layers.conv2d_layer(ip_layer=dec_cat_c6,name='dec_c5_a', num_filters=no_filters[5], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_c5_b = layers.conv2d_layer(ip_layer=dec_c5_a,name='dec_c5_b', num_filters=no_filters[5], use_relu=True, use_batch_norm=True, training_phase=train_phase)
-
+        print(dec_c5_b)
         dec_c5_up = layers.upsample_layer(ip_layer=dec_c5_b, method=self.interp_val, scale_factor=int(scale_fac))
         #print('dec large up',dec_c6_up,dec_c5_up)
         dec_dc5 = layers.conv2d_layer(ip_layer=dec_c5_up,name='dec_dc5', kernel_size=(fs_de,fs_de),num_filters=no_filters[4], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_cat_c5 = tf.concat((dec_dc5,enc_c4_b),axis=3,name='dec_cat_c5')
         dec_c4_a = layers.conv2d_layer(ip_layer=dec_cat_c5,name='dec_c4_a', num_filters=no_filters[4], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_c4_b = layers.conv2d_layer(ip_layer=dec_c4_a,name='dec_c4_b', num_filters=no_filters[4], use_relu=True, use_batch_norm=True, training_phase=train_phase)
-
+        print(dec_c4_b)
         # Level 4
         dec_up4 = layers.upsample_layer(ip_layer=dec_c4_b, method=self.interp_val, scale_factor=scale_fac)
         dec_dc4 = layers.conv2d_layer(ip_layer=dec_up4,name='dec_dc4', kernel_size=(fs_de,fs_de),num_filters=no_filters[3], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_cat_c4 = tf.concat((dec_dc4,enc_c3_b),axis=3,name='dec_cat_c4')
         dec_c3_a = layers.conv2d_layer(ip_layer=dec_cat_c4,name='dec_c3_a', num_filters=no_filters[3], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_c3_b = layers.conv2d_layer(ip_layer=dec_c3_a,name='dec_c3_b', num_filters=no_filters[3], use_relu=True, use_batch_norm=True, training_phase=train_phase)
-
+        print(dec_c3_b)
         # Level 3
         dec_up3 = layers.upsample_layer(ip_layer=dec_c3_b, method=self.interp_val, scale_factor=scale_fac)
         dec_dc3 = layers.conv2d_layer(ip_layer=dec_up3,name='dec_dc3', kernel_size=(fs_de,fs_de),num_filters=no_filters[2],use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_cat_c3 = tf.concat((dec_dc3,enc_c2_b),axis=3,name='dec_cat_c3')
         dec_c2_a = layers.conv2d_layer(ip_layer=dec_cat_c3,name='dec_c2_a', num_filters=no_filters[2], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         dec_c2_b = layers.conv2d_layer(ip_layer=dec_c2_a,name='dec_c2_b', num_filters=no_filters[2], use_relu=True, use_batch_norm=True, training_phase=train_phase)
-
+        print(dec_c2_b)
         # Level 2
         dec_up2 = layers.upsample_layer(ip_layer=dec_c2_b, method=self.interp_val, scale_factor=scale_fac)
         dec_dc2 = layers.conv2d_layer(ip_layer=dec_up2,name='dec_dc2', kernel_size=(fs_de,fs_de),num_filters=no_filters[1], use_relu=True, use_batch_norm=True, training_phase=train_phase)
@@ -828,14 +834,20 @@ class modelObj:
         # Level 1
         seg_c1_a = layers.conv2d_layer(ip_layer=dec_c1_a,name='seg_c1_a',num_filters=no_filters[1], use_relu=True, use_batch_norm=True, training_phase=train_phase)
         seg_c1_b = layers.conv2d_layer(ip_layer=seg_c1_a,name='seg_c1_b', num_filters=no_filters[1], use_relu=True, use_batch_norm=True, training_phase=train_phase)
-
+        # print("layers")
+        # print(seg_c1_a)
+        # print(seg_c1_b)
+        do_layer = tf.nn.dropout(seg_c1_b, keep_prob=0.8)
         #Final output layer - Logits before softmax
-        seg_fin_layer = layers.conv2d_layer(ip_layer=seg_c1_b,name='seg_fin_layer', num_filters=self.num_classes,use_bias=False, use_relu=False, use_batch_norm=False, training_phase=train_phase)
+        seg_fin_layer = layers.conv2d_layer(ip_layer=do_layer,name='seg_fin_layer', num_filters=self.num_classes,use_bias=False, use_relu=False, use_batch_norm=False, training_phase=train_phase)
+        print(seg_fin_layer)
         actual_cost = loss.dice_loss_with_backgrnd(logits=seg_fin_layer, labels=y_l_onehot)
 
         # Predict Class
         y_pred = tf.nn.softmax(seg_fin_layer)
         y_pred_cls = tf.argmax(y_pred,axis=3)
+
+        debug = None
 
         ########################
         # Simple Cross Entropy (CE) between predicted labels and true labels
@@ -846,6 +858,9 @@ class modelObj:
         elif(dsc_loss==2):
             #with background
             seg_cost = loss.dice_loss_with_backgrnd(logits=seg_fin_layer, labels=y_l_onehot)
+        elif(dsc_loss==3):
+            #speckle loss
+            seg_cost, debug = loss.speckle_dice_loss(logits=seg_fin_layer, labels=y_l_onehot, imgs=x, label_dists=label_dists, bt_size=self.batch_size)
         else:
             # For Weighted Cross Entropy loss function with background
             seg_cost = loss.pixel_wise_cross_entropy_loss_weighted(logits=seg_fin_layer, labels=y_l_onehot, class_weights=class_weights)
@@ -890,15 +905,15 @@ class modelObj:
         val_summary = tf.summary.merge([mean_dice_summary,val_totalc_sum])
 
         if(mtask_en==1):
-            return {'x': x, 'y_l':y_l, 'train_phase':train_phase, 'seg_cost': cost_seg,'optimizer_unet_seg':optimizer_unet_seg, \
+            return {'x': x, 'y_l':y_l, 'label_dists':label_dists,  'train_phase':train_phase, 'seg_cost': cost_seg,'optimizer_unet_seg':optimizer_unet_seg, \
                 'y_pred' : y_pred, 'y_pred_cls': y_pred_cls, 'optimizer_unet_dec':optimizer_unet_dec,'actual_cost':actual_cost,\
                 'train_summary':train_summary,'seg_fin_layer':seg_fin_layer,'optimizer_unet_all':optimizer_unet_all, \
-                'mean_dice':mean_dice,'val_totalc':val_totalc,'val_summary':val_summary}
+                'mean_dice':mean_dice,'val_totalc':val_totalc,'val_summary':val_summary, 'debug': debug}
         else:
-            return {'x': x, 'y_l':y_l, 'train_phase':train_phase,'seg_cost': cost_seg,'optimizer_unet_seg':optimizer_unet_seg, \
+            return {'x': x, 'y_l':y_l, 'label_dists':label_dists, 'train_phase':train_phase,'seg_cost': cost_seg,'optimizer_unet_seg':optimizer_unet_seg, \
                 'y_pred' : y_pred, 'y_pred_cls': y_pred_cls, 'optimizer_unet_dec':optimizer_unet_dec,\
                 'train_summary':train_summary,'seg_fin_layer':seg_fin_layer,'optimizer_unet_all':optimizer_unet_all,\
-                'actual_cost':actual_cost,'mean_dice':mean_dice,'val_totalc':val_totalc,'val_summary':val_summary}
+                'actual_cost':actual_cost,'mean_dice':mean_dice,'val_totalc':val_totalc,'val_summary':val_summary, 'debug': debug}
 
 
     def decoder_pretrain_net(self,learn_rate_seg=0.001,temp_fac=1,no_of_local_regions=5,fs_de=2,no_of_decoder_blocks=1,local_reg_size=0,\
@@ -913,9 +928,13 @@ class modelObj:
         # placeholders for the network
         # Inputs
         x = tf.placeholder(tf.float32, shape=[None, self.img_size_x, self.img_size_y, num_channels], name='x')
+        # print("x")
+        # print(x)
         train_phase = tf.placeholder(tf.bool, name='train_phase')
-        if(local_loss_exp_no==5 or local_loss_exp_no==6):
+        if(local_loss_exp_no in [5, 6, 8, 9]):
             y_l = tf.placeholder(tf.float32, shape=self.batch_size, name='y_l')
+        else:
+            y_l = None
         ###################################
         # Encoder network
         ########################
@@ -1111,20 +1130,31 @@ class modelObj:
             bs,tmp_batch_size=24,12
             #bs=2*self.batch_size
         elif(local_loss_exp_no==0):
+            # print("STARTING")
+            # print(y_fin_tmp)
             y_fin=y_fin_tmp
             #print('y_fin_local',y_fin)
-
+            # print(bs)
+            # print(im_x)
+            # print(im_y)
+            # print(neg_sample_indexes)
+            # print(pos_sample_indexes)
             #loop over each image pair to iterate over all positive local regions within a feature map to calculate the local contrastive loss
             for pos_index in range(0,bs,2):
-
+                # print("loop")
                 #indexes of positive pair of samples (f_a1_i,f_a2_i) of input images (x_a1_i,x_a2_i) from the batch of feature maps.
                 num_i1=np.arange(pos_index,pos_index+1,dtype=np.int32)
                 num_i2 = np.arange(pos_index+1, pos_index+2, dtype=np.int32)
+                # print(num_i1)
+                # print(num_i2)
 
                 # gather required positive samples (f_a1_i,f_a2_i) of (x_a1_i,x_a2_i) for the numerator term
                 x_num_i1=tf.gather(y_fin,num_i1)
                 x_num_i2=tf.gather(y_fin,num_i2)
                 #print('x_num_i1,x_num_i2',x_num_i1,x_num_i2)
+
+                # print(x_num_i1)
+                # print(x_num_i2)
 
                 # if local region size is 3x3
                 if(local_reg_size==1):
@@ -1132,9 +1162,13 @@ class modelObj:
                     for local_pos_index in range(0,no_of_local_regions,1):
                         # 'pos_index_num' is the positive local region index in feature map f_a1_i of image x_a1_i that contributes to the numerator term.
                         #fetch x and y coordinates
+                        # print("num i1s")
                         x_num_tmp_i1=tf.gather(x_num_i1,[pos_sample_indexes[local_pos_index,0],pos_sample_indexes[local_pos_index,0]+1,pos_sample_indexes[local_pos_index,0]+2],axis=1)
+                        # print(x_num_tmp_i1)
                         x_num_tmp_i1=tf.gather(x_num_tmp_i1,[pos_sample_indexes[local_pos_index,1],pos_sample_indexes[local_pos_index,1]+1,pos_sample_indexes[local_pos_index,1]+2],axis=2)
+                        # print(x_num_tmp_i1)
                         x_n_i1_flat = tf.layers.flatten(inputs=x_num_tmp_i1)
+                        # print(x_n_i1_flat)
                         if(wgt_en==1):
                             x_w3_n_i1=tf.layers.dense(inputs=x_n_i1_flat, units=128, name='seg_pred', activation=None, use_bias=False,reuse=tf.AUTO_REUSE)
                         else:
@@ -1465,7 +1499,7 @@ class modelObj:
 
             local_loss=local_loss/no_of_local_regions
         
-        elif(local_loss_exp_no==2):
+        elif(local_loss_exp_no==2 or local_loss_exp_no==7):
             y_fin=y_fin_tmp
 
             for pos_index in range(0,bs,4):
@@ -1643,7 +1677,7 @@ class modelObj:
                     # local loss from feature map f_a1_i and f_a1_k
                     #loss from img-i vs i+8 (1a vs 2b)
                     local_loss=local_loss-tf.log(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))/(tf.math.reduce_sum(tf.exp(num_i1_i4_ss))+tf.math.reduce_sum(den_i3_ss)))
-        elif(local_loss_exp_no==5 or local_loss_exp_no==6):
+        elif(local_loss_exp_no in [5, 6, 8, 9]):
             y_fin=y_fin_tmp
             bs = self.batch_size
             for pos_index in range(0, bs):

@@ -32,7 +32,7 @@ parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 parser.add_argument('--lr_reg', type=float, default=0.001)
 
 # data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--data_aug', type=int, default=0, choices=[0,1])
+parser.add_argument('--data_aug', type=int, default=0, choices=[0,1,2,3,4,5,6,7])
 # version of run
 parser.add_argument('--ver', type=int, default=0)
 # temperature_scaling factor
@@ -42,7 +42,7 @@ parser.add_argument('--temp_fac', type=float, default=0.1)
 parser.add_argument('--bbox_dim', type=int, default=192)
 
 #data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--pretr_data_aug', type=int, default=0, choices=[0,1,2])
+parser.add_argument('--pretr_data_aug', type=int, default=0, choices=[0,1,2,3,4,5,6,7,8,9])
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
 # Later, these re-sized images are used for pre-training using global contrastive loss.
 parser.add_argument('--pretr_bbox_dim', type=int, default=192)
@@ -51,7 +51,7 @@ parser.add_argument('--pretr_no_of_tr_imgs', type=str, default='tr52', choices=[
 #combination of training images
 parser.add_argument('--pretr_comb_tr_imgs', type=str, default='c1', choices=['c1'])
 #no of iterations to run
-parser.add_argument('--pretr_n_iter', type=int, default=10001)
+parser.add_argument('--pretr_n_iter', type=int, default=5001)
 #pretr version
 parser.add_argument('--pretr_ver', type=int, default=0)
 
@@ -66,8 +66,8 @@ parser.add_argument('--global_loss_exp_no', type=int, default=2)
 # 1 - (0) + sample local regions to match from 2 differnt images that are from 2 different volumes but they belong to corresponding local regions of similar partitions.
 parser.add_argument('--local_loss_exp_no', type=int, default=0)
 #no_of_partitions per volume
+parser.add_argument('--n_parts_en', type=int, default=4)
 parser.add_argument('--n_parts', type=int, default=4)
-
 
 #Load encoder weights from pre-trained contrastive loss model; 1-Yes, 0-No.
 #Fine-tune which layers: 1- FT only dec. layer (enc. wgts are frozen), 2- FT all layers
@@ -111,7 +111,7 @@ parser.add_argument('--no_of_neg_regs_override', type=int, default=4)
 parser.add_argument('--bt_size', type=int,default=12)
 
 #no of iterations to run
-parser.add_argument('--n_iter', type=int, default=5000)
+parser.add_argument('--n_iter', type=int, default=2001)
 
 parser.add_argument('--split', type=int, default=100)
 
@@ -175,16 +175,30 @@ f1_util = f1_utilsObj(cfg,dt)
 # Restore the model and initialize the encoder with the pre-trained weights from last epoch
 ######################################
 #define save_dir of pre-trained encoder model
-save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/augmodelsfull/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
 
 save_dir=str(save_dir)+'/bt_size_'+str(parse_config.bt_size)+'/'
 
 if(parse_config.pretr_data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
-else:
+elif(parse_config.pretr_data_aug==2):
     save_dir=str(save_dir)+'/with_data_aug/'
+elif(parse_config.pretr_data_aug==3):
+    save_dir=str(save_dir)+'/with_data_aug_sha/'
+elif(parse_config.pretr_data_aug==4):
+    save_dir=str(save_dir)+'/with_data_aug_nak/'
+elif(parse_config.pretr_data_aug==5):
+    save_dir=str(save_dir)+'/with_data_aug_all/'
+elif(parse_config.pretr_data_aug==6):
+    save_dir=str(save_dir)+'/with_data_aug_dep/'
+elif(parse_config.pretr_data_aug==7):
+    save_dir=str(save_dir)+'/with_data_aug_tgc/'
+elif(parse_config.pretr_data_aug==8):
+    save_dir=str(save_dir)+'/with_data_aug_nak2/'
+elif(parse_config.pretr_data_aug==9):
+    save_dir=str(save_dir)+'/with_data_aug_nakboth/'
 
-save_dir=str(save_dir)+'global_loss_exp_no_'+str(parse_config.global_loss_exp_no)+'_n_parts_'+str(parse_config.n_parts)+'/'
+save_dir=str(save_dir)+'global_loss_exp_no_'+str(parse_config.global_loss_exp_no)+'_n_parts_'+str(parse_config.n_parts_en)+'/'
 
 save_dir=str(save_dir)+'temp_fac_'+str(parse_config.temp_fac)+'/'
 
@@ -196,7 +210,7 @@ print('save dir ',save_dir)
 tf.reset_default_graph()
 print('cfg.temp_fac',parse_config.lr_reg,parse_config.temp_fac)
 ae = model.encoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=parse_config.temp_fac, \
-                        global_loss_exp_no=parse_config.global_loss_exp_no,n_parts=parse_config.n_parts)
+                        global_loss_exp_no=parse_config.global_loss_exp_no,n_parts=parse_config.n_parts_en)
 ######################################
 # load pre-trained encoder weight variables and their values
 mp_best=get_chkpt_file(save_dir)
@@ -219,14 +233,28 @@ print('loaded encoder weight values from pre-trained model with global contrasti
 
 ######################################
 #define directory to save the pre-training model of decoder with encoder weights frozen (encoder weights obtained from earlier pre-training step)
-save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/augmodelsfull/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
 
 save_dir=str(save_dir)+'/load_encoder_wgts_from_pretrained_model/'
 
 if(parse_config.pretr_data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
-else:
+elif(parse_config.pretr_data_aug==2):
     save_dir=str(save_dir)+'/with_data_aug/'
+elif(parse_config.pretr_data_aug==3):
+    save_dir=str(save_dir)+'/with_data_aug_sha/'
+elif(parse_config.pretr_data_aug==4):
+    save_dir=str(save_dir)+'/with_data_aug_nak/'
+elif(parse_config.pretr_data_aug==5):
+    save_dir=str(save_dir)+'/with_data_aug_all/'
+elif(parse_config.pretr_data_aug==6):
+    save_dir=str(save_dir)+'/with_data_aug_dep/'
+elif(parse_config.pretr_data_aug==7):
+    save_dir=str(save_dir)+'/with_data_aug_tgc/'
+elif(parse_config.pretr_data_aug==8):
+    save_dir=str(save_dir)+'/with_data_aug_nak2/'
+elif(parse_config.pretr_data_aug==9):
+    save_dir=str(save_dir)+'/with_data_aug_nakboth/'
 
 save_dir=str(save_dir)+'local_loss_exp_no_'+str(parse_config.local_loss_exp_no)+'_global_loss_exp_no_'+str(parse_config.global_loss_exp_no)\
              +'_n_parts_'+str(parse_config.n_parts)+'/'
@@ -270,7 +298,7 @@ print('load unlabeled images for pre-training')
 print(parse_config.global_loss_exp_no)
 if(parse_config.local_loss_exp_no==0):
     unl_imgs=dt.load_cropped_img_labels(unl_list,label_present=0)
-elif(parse_config.local_loss_exp_no==2 or parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+elif(parse_config.local_loss_exp_no in [2, 5, 6, 7, 8, 9]):
     unl_imgs=dt.load_list_cropped_img_labels(unl_list,label_present=0)
 else:
     _,unl_imgs,_,_=load_val_imgs(unl_list,dt,orig_img_dt)
@@ -296,7 +324,7 @@ ae = model.decoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=pars
 
 if(parse_config.local_loss_exp_no==1):
     cfg.batch_size_ft=12
-if(parse_config.local_loss_exp_no==2 or parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+if(parse_config.local_loss_exp_no in [2, 5, 6, 7, 8, 9]):
     ae_rc = model.brit_cont_net(batch_size=2*cfg.batch_size_ft)
 else:
     ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
@@ -403,10 +431,6 @@ for epoch_i in range(start_epoch,n_epochs):
     elif(parse_config.local_loss_exp_no==5):
         n_vols,n_parts=len(unl_list),parse_config.n_parts
         img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=False)
-        print("labels")
-        print(labels)
-        print(len(img_batch))
-        print(len(labels))
         color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
         # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
         # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
@@ -415,17 +439,47 @@ for epoch_i in range(start_epoch,n_epochs):
     elif(parse_config.local_loss_exp_no==6):
         n_vols,n_parts=len(unl_list),parse_config.n_parts
         img_batch, labels = sample_minibatch_for_contrastive_loss_opti(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=True)
-        print("labels")
-        print(labels)
-        print(len(img_batch))
-        print(len(labels))
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
+    elif(parse_config.local_loss_exp_no==7):
+        #########################
+        # G^{D} -  Match corresponding local regions across two intensity transformed images (x_i_a1,x_j_a1) from 2 different volumes from same partition.
+        # where x_i_a1, x_j_a1 are from volume i and j, respectively. (i not equal to j).
+        #########################
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        # original images batch sampled from unlabeled images
+        img_batch=sample_minibatch_for_global_loss_opti_cine_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts)
+        # img_batch=img_batch[0:cfg.batch_size_ft]
+
+        crop_batch1=img_batch
+        # Set 1 - random intensity aug
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # Set 2 - different random intensity aug
+        color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+
+        # stitch 2 batches into 1 batch for pre-training
+        cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+    elif(parse_config.local_loss_exp_no==8):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=False)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
+    elif(parse_config.local_loss_exp_no==9):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=True)
         color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: img_batch})
         # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
         # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
         # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
         cat_batch = color_batch1
     #Run optimizer update on the training unlabeled data
-    if (parse_config.local_loss_exp_no==5 or parse_config.local_loss_exp_no==6):
+    if (parse_config.local_loss_exp_no in [5, 6, 8, 9]):
         train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_dec']],\
                                         feed_dict={ae['x']:cat_batch,ae['train_phase']:True,ae['y_l']:labels})
     else:

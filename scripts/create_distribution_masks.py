@@ -8,6 +8,7 @@ Functions for QUS spekcle analysis
 """
 import os
 import sys
+import time
 import numpy as np
 from PIL import Image
 from numpy import asarray
@@ -24,9 +25,11 @@ import multiprocessing as mp
 sys.path.append("/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/domain_specific_cl")
 import experiment_init.init_kidney_regions as reg_cfg
 
-imDir = os.path.join(reg_cfg.data_path_tr_cropped, "imagesTr")
-maskDir = os.path.join(reg_cfg.data_path_tr_cropped, "labelsTr")
-outDir = os.path.join(reg_cfg.data_path_tr_cropped, "statsTr")
+imDir = reg_cfg.data_path_pretr_cropped
+dirpath, _ = os.path.split(reg_cfg.data_path_pretr_cropped)
+outDir = "/scratch/st-rohling-1/contrastive_learning/domain_specific_cl/unlabelled_stats"
+
+print("out" + outDir)
 # statsListColNames = ['fileName', 'maskNum',
 #                      'burrC','burrD', 'burrLoc', 'burrScale',
 #                      'gamShape', 'gamLoc', 'gamScale', 
@@ -36,8 +39,8 @@ outDir = os.path.join(reg_cfg.data_path_tr_cropped, "statsTr")
 #                      'rayleighLoc','rayleighScale',
 #                      'ricShape','ricLoc','ricScale']
 statsListColNames = ['fileName', 'maskNum',
-                     'nakShape', 'nakLoc', 'nakScale']
-outFile = outDir + '\stats.csv'
+                     'nakShape', 'nakScale']
+
 numParams = len(statsListColNames) - 2
 #Setting patch size, should be rectangular representing the resolution cell
 patchSizeX = 20
@@ -47,24 +50,25 @@ minMaskPixels = -1
 
 #Makes a patch of size (height, width) given an image and the (row, col) 
 #for the center of that patch
-def patchStats(im, mask):
-    # print(type(im))
-    # print(im.shape)
-    # print(mask.shape)
-    im = np.squeeze(im)
+def patchStats(im, patchSizeX, patchSizeY):
     #creating list of parameter maps
+    im = im[:, :, 0]
     rows, cols = im.shape
     paramMaps = []
     for i in range(0, numParams):
         paramMaps.append(np.zeros((rows,cols)))
     
     #iterating through all rows and cols and making the patches
+    
+    halfPatchX = math.floor(patchSizeX/2)
+    halfPatchY = math.floor(patchSizeY/2)
+    tic = time.time()
     for row in range(0,rows):
-        print(row)
+        
+        # tic = time.time()
         for col in range(0,cols):
             #have to define start and stop index of the patch
-            halfPatchX = math.floor(patchSizeX/2)
-            halfPatchY = math.floor(patchSizeY/2)
+
             
             #careful, python uses 0 indexing unlike matlab
             #NOTE: currently no padding is done on the edges (e.g. patches on
@@ -90,25 +94,21 @@ def patchStats(im, mask):
             else:
                 patchEndX = (col + halfPatchX)
 
-            #now we can get the patch from the image and mask
             imPatch = im[patchStartY:patchEndY, patchStartX:patchEndX]
-            maskPatch = mask[patchStartY:patchEndY, patchStartX:patchEndX]
-            totalMaskPixels = np.count_nonzero(maskPatch)
+
+            #print(Patch: (", row, col, "), ",
+            #      patchStartY, patchEndY, patchStartX, patchEndX)
             
-           #now these patches serve as the input images to the uusal fitDistribution fnc
-           #if insufficient masked pixels, then save comp time by ignoring
-            if(totalMaskPixels > minMaskPixels):
-                # print("Mask Pixels:", totalMaskPixels, "Patch: (", row, col, "), ",
-                # patchStartY, patchEndY, patchStartX, patchEndX)
-                
-                #computing stats for this patch
-                statsList = fitDistributions(imPatch)[0]
-                #filling the parameter maps with the distro params
-                for i in range(0, numParams):
-                    paramMaps[i][row,col] = statsList[i]
-            else:
-                print('Insufficient masked pixels: ', totalMaskPixels, "Patch: (", row, col, "), ",
-                  patchStartY, patchEndY, patchStartX, patchEndX)
+            #computing stats for this patch
+            #statsList = fitDistributions(imPatch)
+            statsList = estimateNakagami(imPatch)
+            
+            #filling the parameter maps with the distro params
+            for i in range(0, numParams):
+                paramMaps[i][row,col] = statsList[i]
+        
+    toc = time.time()
+    print('Row: ', row, ' of ', rows, (str(toc-tic)), 's')
 
     return paramMaps
 
@@ -136,6 +136,37 @@ def fitDistributions(im):
 
     return np.nan_to_num(statsList)
 
+def estimateNakagami(im):
+
+    #making arrays to compute expectations as per nakagami estimates
+    #careful for overflows, need to declare python int in case
+    
+    # im = im.astype(np.int64)
+    e_x2 = 0
+    e_x4 = 0
+    # im = im[:, :, 0]
+    rows,cols = im.shape
+    N = rows*cols
+    for x in range(0,rows):
+        for y in range(0,cols):
+            e_x2 = e_x2 + (im[x,y])**2
+            e_x4 = e_x4 + (im[x,y])**4
+    if N > 0:     
+        e_x2 = e_x2 / N
+        e_x4 = e_x4 / N
+    else:
+        e_x2 = 0
+        e_x4 = 0
+    
+    nakScale = e_x2
+    #using inverse normalized variance esimator for Nakagami
+    if(( e_x4 - (e_x2**2)) == 0):
+        nakShape = 0
+    else:
+        nakShape = e_x2**2 / ( e_x4 - (e_x2**2))
+    
+    return np.nan_to_num([nakShape, nakScale])
+
 #creates an array of only the pixels corresponding to a certain binary mask
 def getMaskedPixels(im, mask, maskVal):
     maskedPixels = []
@@ -149,14 +180,12 @@ def getMaskedPixels(im, mask, maskVal):
 
 def processImage(pngFile):
     print("File Being Processed: " + pngFile)
-    maskFile = maskDir + "/" + os.path.basename(pngFile)
     matFile = outDir + "/" + os.path.basename(pngFile.replace(".nii.gz", ".npz"))
 
     imArray = asarray(nib.load(pngFile).get_data())
-    maskArray = asarray(nib.load(maskFile).get_data())
     
 
-    paramMaps = patchStats(imArray, maskArray)
+    paramMaps = patchStats(imArray, patchSizeX, patchSizeY)
     # scipy.io.savemat(matFile, mdict={'data': paramMaps})
     print("outfile:" + matFile)
     np.savez(matFile, np.array(paramMaps))
@@ -165,56 +194,16 @@ def processImage(pngFile):
 if not(os.path.exists(outDir)):
     os.mkdir(outDir)
 
-
 # print(glob(os.path.join(imDir, "*.nii.gz")))
 cpus = mp.cpu_count()  
 pool = mp.Pool(processes=cpus)
 print("cpus " + str(cpus))
 #paramater maps
+print(len(glob(os.path.join(imDir, "*.nii.gz"))))
+print(os.path.join(imDir, "*.nii.gz"))
 for pngFile in glob(os.path.join(imDir, "*.nii.gz")):
+    # print(pngFile)
+    # processImage(pngFile)
     result = pool.apply_async(processImage, args=(pngFile,))
-    break
 pool.close()
 pool.join()
-
-
-#full image stats
-#creating one big list, future dataframe for all the stats
-# statsList = []
-# for pngFile in glob(os.path.join(imDir, "*.png")):
-#     print(pngFile)
-    
-#     maskFile = maskDir + "\\" + os.path.basename(pngFile)
-#     matFile = matDir + "\\" + os.path.basename(pngFile)  + ".mat"
-    
-#     if(os.path.isfile(pngFile) and os.path.isfile(maskFile)):
-#         imArray = asarray(Image.open(pngFile).convert('L'))
-#         maskArray = asarray(Image.open(maskFile).convert('L'))
-        
-#         maskList = np.unique(maskArray)
-#         maskedPixelsList = []
-        
-        
-#         #looping through the masks
-#         #storing masked pixels ast a list of sublists, one sublist for each mask
-#         #careful - index 0 corresponds to mask value 1
-        
-#         for maskNum in maskList:
-#             if maskNum != 0:
-#                 print("Fitting dist on image, mask #: ", maskNum)
-#                 maskedPixelsList = getMaskedPixels(imArray, maskArray, maskNum)
-#                 #appending file name, then the stats list
-#                 distributionParams = fitDistributions(maskedPixelsList)[0].tolist()
-#                 statsList.append([os.path.basename(pngFile)] + [maskNum] + distributionParams)
-
-
-
-# print('Saving: ', outFile)
-# statsDF = pd.DataFrame(statsList, columns = statsListColNames)
-# statsDF.to_csv(outFile, index=False)
-
-
-#showing plots
-# plt.figure()
-# plt.imshow(mask) 
-# plt.show() 

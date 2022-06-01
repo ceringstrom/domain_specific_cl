@@ -17,8 +17,8 @@ sys.path.append('../')
 
 from utils import *
 
-import wandb
-wandb.init(project="dscl-kidney-ftn-cap", config=tf.flags.FLAGS)
+# import wandb
+# wandb.init(project="dscl-kidney-ftn-cap", config=tf.flags.FLAGS)
 
 import argparse
 parser = argparse.ArgumentParser()
@@ -110,8 +110,12 @@ parser.add_argument('--n_iter', type=int, default=5001)
 
 parser.add_argument('--split', type=int, default=100)
 
+parser.add_argument('--mc_iterations', type=int, default=500)
+
+parser.add_argument('--output_dir', type=str, default="/scratcg/st-rohling-1/test")
+
 parse_config = parser.parse_args()
-wandb.config.update(parse_config)
+# wandb.config.update(parse_config)
 #parse_config = parser.parse_args(args=[])
 
 if parse_config.dataset == 'acdc':
@@ -156,6 +160,10 @@ elif parse_config.dataset == 'prostate_md':
 elif parse_config.dataset == 'kidney_cap' or parse_config.dataset == 'kidney_reg':
     print('set kidney_cap orig img dataloader handle')
     orig_img_dt=dt.load_kidney_imgs
+    if parse_config.dataset == 'kidney_cap':
+        sub_folder = "capsule"
+    else:
+        sub_folder = "regions"
 
 #  load model object
 from models import modelObj
@@ -273,8 +281,9 @@ print("Model restored")
 #####################################
 
 # infer predictions over test volumes from the best model saved during training
-save_dir_tmp=save_dir+'/test_set_predictions/'
-f1_util.net_inference(test_list,sess,ae,dt,orig_img_dt,save_dir_tmp,parse_config.dataset)
+save_dir_tmp=(save_dir+'/test_set_predictions/uncertainty2/' + sub_folder).replace("kidney_reg", "kidney_cap")
+print(save_dir_tmp)
+f1_util.net_monte_carlo(test_list,sess,ae,dt,orig_img_dt,save_dir_tmp,parse_config.dataset,parse_config.mc_iterations)
 
 sess.close()
 tf.reset_default_graph()

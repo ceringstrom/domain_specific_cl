@@ -354,6 +354,47 @@ class f1_utilsObj:
             pred_filename =  os.path.join(str(save_dir_tmp), str(test_id)+'.nii.gz')
             nib.save(array_img, pred_filename)
 
+    def net_monte_carlo(self, val_list,sess,ae,dt,orig_img_dt,save_dir_tmp,dataset,mc_iterations):
+        count=0
+        mean_20subjs_dsc=[]
+
+        pathlib.Path(save_dir_tmp).mkdir(parents=True, exist_ok=True)
+
+        # Load each test image and infer the predicted segmentation mask and compute Dice scores
+        for test_id in val_list:
+            test_id_l=[test_id]
+
+            #load image,label pairs and process it to chosen resolution and dimensions
+            img_sys,label_sys,pixel_size,affine_tst= orig_img_dt(test_id_l,ret_affine=1)
+            cropped_img_sys,cropped_mask_sys = dt.preprocess_data(img_sys, label_sys, pixel_size)
+            img_crop_re=np.swapaxes(cropped_img_sys,1,2)
+            img_crop_re=np.swapaxes(img_crop_re,0,1)
+            all_predictions = []
+            # print(mc_iterations)
+            for i in range(mc_iterations):
+                print(i)
+                pred_sf_mask = self.calc_pred_mask_batchwise(sess, ae, img_crop_re)
+                all_predictions.append(pred_sf_mask)
+                # print(type(pred_sf_mask), pred_sf_mask.shape)
+                # print("end")
+            # print("stack")
+            all_predictions = np.vstack(all_predictions)
+            # print("taking mean")
+            all_predictions_mean = np.mean(all_predictions, axis=0, keepdims=True)
+            all_predictions = np.expand_dims(all_predictions, axis=-1)
+            # print("start")
+            # print(all_predictions_mean.shape)
+            # print(all_predictions.shape)
+            mean_matrix = np.matmul(np.transpose(all_predictions_mean, (1, 2, 3, 0)), np.transpose(all_predictions_mean, (1, 2, 0, 3)))
+            output_dev = np.matmul(all_predictions, np.transpose(all_predictions, (0, 1, 2, 4, 3)))
+            # print(mean_matrix.shape)
+            # print(output_dev.shape)
+            output_dev_mean = output_dev.mean(axis=0)
+            varcov_matrix = output_dev_mean - mean_matrix
+            # print(np.mean(varcov_matrix, axis=(0, 1)))
+            output_filename = os.path.join(save_dir_tmp, test_id + ".npz")
+            np.savez(output_filename, data=varcov_matrix, img=img_crop_re)
+
     def test_set_predictions(self, val_list,sess,ae,dt,orig_img_dt,save_dir_tmp):
         '''
         To estimate the predicted segmentation masks of test images and compute their Dice scores (DSC) and plot the predicted segmentations.

@@ -2,6 +2,8 @@ import numpy as np
 #from sklearn.metrics import f1_score
 import nibabel as nib
 import os
+import SimpleITK as sitk
+import random
 
 #to make directories
 import pathlib
@@ -16,6 +18,7 @@ class dataloaderObj:
         self.data_path_tr_cropped=cfg.data_path_tr_cropped
         self.data_path_pretr=cfg.data_path_pretr
         self.data_path_pretr_cropped=cfg.data_path_pretr_cropped
+        self.data_path_stats_cropped=cfg.data_path_stats_cropped
         self.target_resolution=cfg.target_resolution
         self.dataset_name=cfg.dataset_name
         self.size=cfg.size
@@ -182,7 +185,7 @@ class dataloaderObj:
             else:
                 return image_data_test_sys,label_data_test_sys,pixel_size,affine_tst
 
-    def load_kidney_imgs(self,study_id_list,ret_affine=0,label_present=1):
+    def load_kidney_imgs(self,study_id_list,ret_affine=0,label_present=1, normalize=True):
         """
         #Load kidney and its label with pixel dimensions
         input params :
@@ -208,7 +211,8 @@ class dataloaderObj:
         pixel_size=image_data_test_load.header['pixdim'][1:4]
         affine_tst=image_data_test_load.affine
         
-        image_data_test_sys=self.normalize_minmax_data(image_data_test_sys)
+        if normalize:
+            image_data_test_sys=self.normalize_minmax_data(image_data_test_sys)
 
         if(label_present==1):
             # Load the segmentation mask
@@ -389,7 +393,6 @@ class dataloaderObj:
         i = 0
         img_cat = []
         for study_id in train_ids_list:
-            print(i)
             i += 1
             # Load the 3D image
             if self.ptr:
@@ -424,7 +427,7 @@ class dataloaderObj:
             return img_cat
 
 
-    def load_cropped_img_labels(self, train_ids_list,label_present=1):
+    def load_cropped_img_labels(self, train_ids_list,label_present=1,maps_present=False,param=0):
        """
        # Load the already created and stored a-priori acdc/prostate/mmwhs image and its labels that are pre-processed: normalized and cropped to chosen dimensions
        input params :
@@ -437,9 +440,13 @@ class dataloaderObj:
        count=0
        i = 0
        img_cat = []
-       for study_id in train_ids_list:
-           print(i)
+       print(len(train_ids_list))
+       
+       random.Random(4).shuffle(train_ids_list)
+
+       for study_id in train_ids_list[:10000]:
            i += 1
+           print(i)
            # Load the 3D image
            if self.ptr:
                img_fname = os.path.join(str(self.data_path_pretr_cropped), study_id+'.nii.gz')
@@ -447,8 +454,7 @@ class dataloaderObj:
                img_fname = os.path.join(str(self.data_path_tr_cropped), "imagesTr", study_id+'.nii.gz')
            img_tmp_load = nib.load(img_fname)
            img_tmp=img_tmp_load.get_data()
-        #    img_tmp = np.expand_dims(img_tmp, axis=3)
-
+        
            #load the mask if label is present
            if(label_present==1):
                # Load the segmentation mask
@@ -456,18 +462,35 @@ class dataloaderObj:
                mask_tmp_load = nib.load(mask_fname)
                mask_tmp=mask_tmp_load.get_data()
 
+           if(maps_present):
+                stats_fname = os.path.join(str(self.data_path_stats_cropped), study_id+'.npz')
+                stats_tmp_load = np.load(stats_fname)
+                stats_tmp = stats_tmp_load['arr_0']
+                stats_tmp = np.moveaxis(stats_tmp, 0, -1)
+           
+           if param==2:
+               param_idx=random.randint(0, 1)
+           else:
+               param_idx=param
+
            if(count==0):
               img_cat=img_tmp
               if(label_present==1):
                   mask_cat=mask_tmp
+              if(maps_present):
+                  stats_cat=np.expand_dims(stats_tmp[:,:,param_idx], -1)
               count=1
            else:
               img_cat=np.concatenate((img_cat,img_tmp),axis=2)
               if(label_present==1):
                   mask_cat=np.concatenate((mask_cat,mask_tmp),axis=2)
+              if(maps_present):
+                  stats_cat=np.concatenate((stats_cat,np.expand_dims(stats_tmp[:,:,param_idx], -1)),axis=2)
 
        if(label_present==1):
            return img_cat,mask_cat
+       elif(maps_present):
+           return img_cat,stats_cat
        else:
            return img_cat
 

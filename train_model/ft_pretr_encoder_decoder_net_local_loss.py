@@ -32,7 +32,7 @@ parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 parser.add_argument('--lr_seg', type=float, default=0.001)
 
 #data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--data_aug', type=int, default=1, choices=[0,1])
+parser.add_argument('--data_aug', type=int, default=1, choices=[0,1,2,3,4])
 #version of run
 parser.add_argument('--ver', type=int, default=0)
 
@@ -44,7 +44,7 @@ parser.add_argument('--pretr_comb_tr_imgs', type=str, default='c1')
 #version of run
 parser.add_argument('--pretr_ver', type=int, default=0)
 #no of iterations to run
-parser.add_argument('--pretr_n_iter', type=int, default=5000)
+parser.add_argument('--pretr_n_iter', type=int, default=2001)
 #data augmentation used in pre-training
 parser.add_argument('--pretr_data_aug', type=int, default=0)
 # bounding box dim - dimension of the cropped image. Ex. if bbox_dim=100, then 100 x 100 region is randomly cropped from original image of size W x W & then re-sized to W x W.
@@ -106,7 +106,7 @@ parser.add_argument('--no_of_neg_local_regions', type=int, default=5)
 parser.add_argument('--no_of_neg_regs_override', type=int, default=4)
 
 #no of iterations to run
-parser.add_argument('--n_iter', type=int, default=10001)
+parser.add_argument('--n_iter', type=int, default=5001)
 
 parser.add_argument('--split', type=int, default=100)
 
@@ -175,14 +175,28 @@ val_step_update=cfg.val_step_update
 #  load encoder + 'l' decoder blocks pre-trained weights from pre-trained model stage wise with global and local loss respectively.
 ######################################
 #define directory where pre-trained encoder + decoder model was saved
-save_dir=str(cfg.srt_dir)+'/models/'+'split_100/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/augmodelsfull/'+'split_100/'+str(parse_config.dataset)+'/trained_models/pretrain_decoder_with_local_contrastive_loss/'
 
 save_dir=str(save_dir)+'/load_encoder_wgts_from_pretrained_model/'
 
 if(parse_config.pretr_data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
-else:
+elif(parse_config.pretr_data_aug==2):
     save_dir=str(save_dir)+'/with_data_aug/'
+elif(parse_config.pretr_data_aug==3):
+    save_dir=str(save_dir)+'/with_data_aug_sha/'
+elif(parse_config.pretr_data_aug==4):
+    save_dir=str(save_dir)+'/with_data_aug_nak/'
+elif(parse_config.pretr_data_aug==5):
+    save_dir=str(save_dir)+'/with_data_aug_all/'
+elif(parse_config.pretr_data_aug==6):
+    save_dir=str(save_dir)+'/with_data_aug_dep/'
+elif(parse_config.pretr_data_aug==7):
+    save_dir=str(save_dir)+'/with_data_aug_tgc/'
+elif(parse_config.pretr_data_aug==8):
+    save_dir=str(save_dir)+'/with_data_aug_nak2/'
+elif(parse_config.pretr_data_aug==9):
+    save_dir=str(save_dir)+'/with_data_aug_nakboth/'
 
 save_dir=str(save_dir)+'local_loss_exp_no_'+str(parse_config.local_loss_exp_no)+'_global_loss_exp_no_'+str(parse_config.global_loss_exp_no)\
              +'_n_parts_'+str(parse_config.n_parts)+'/'
@@ -249,14 +263,26 @@ print('loaded encoder + l decoder blocks weight values from pre-trained model wi
 # Define final U-net model & directory to save - for segmentation task
 #######################################
 #define directory to save fine-tuned model
-save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/fine_tune_on_pretrained_encoder_and_decoder_net/'
+save_dir=str(cfg.srt_dir)+'/augmodelsfull/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/fine_tune_on_pretrained_encoder_and_decoder_net/'
 
-if(parse_config.data_aug==0):
+if(parse_config.pretr_data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
-    parse_config.rd_en,parse_config.ri_en=0,0
-    parse_config.rd_ni,parse_config.en_1hot=0,0
-else:
+elif(parse_config.pretr_data_aug==2):
     save_dir=str(save_dir)+'/with_data_aug/'
+elif(parse_config.pretr_data_aug==3):
+    save_dir=str(save_dir)+'/with_data_aug_sha/'
+elif(parse_config.pretr_data_aug==4):
+    save_dir=str(save_dir)+'/with_data_aug_nak/'
+elif(parse_config.pretr_data_aug==5):
+    save_dir=str(save_dir)+'/with_data_aug_all/'
+elif(parse_config.pretr_data_aug==6):
+    save_dir=str(save_dir)+'/with_data_aug_dep/'
+elif(parse_config.pretr_data_aug==7):
+    save_dir=str(save_dir)+'/with_data_aug_tgc/'
+elif(parse_config.pretr_data_aug==8):
+    save_dir=str(save_dir)+'/with_data_aug_nak2/'
+elif(parse_config.pretr_data_aug==9):
+    save_dir=str(save_dir)+'/with_data_aug_nakboth/'
 
 if(parse_config.rd_en==1 and parse_config.ri_en==1):
     save_dir=str(save_dir)+'rand_deforms_and_ints_en/'
@@ -357,6 +383,8 @@ train_list = data_list.train_data(parse_config.no_of_tr_imgs,parse_config.comb_t
 #load saved training data in cropped dimensions directly
 print('load train volumes')
 train_imgs, train_labels = dt.load_cropped_img_labels(train_list)
+train_distributions = compute_img_distributions(train_imgs, train_labels)
+
 #print('train shape',train_imgs.shape,train_labels.shape)
 
 #load validation volumes id numbers to save the best model during training
@@ -364,6 +392,7 @@ val_list = data_list.val_data(parse_config.no_of_tr_imgs,parse_config.comb_tr_im
 #load val data both in original dimensions and its cropped dimensions
 print('load val volumes')
 val_label_orig,val_img_crop,val_label_crop,pixel_val_list=load_val_imgs(val_list,dt,orig_img_dt)
+val_distributions = compute_img_distributions(np.array(val_img_crop), np.array(val_label_crop))
 
 # get test volumes id list
 print('get test volumes list')
@@ -380,6 +409,7 @@ n_epochs=step_val
 
 tr_loss_list,val_loss_list=[],[]
 tr_dsc_list,val_dsc_list=[],[]
+dsc_list, speckle_list= [], []
 ep_no_list=[]
 loss_least_val=1
 f1_mean_least_val=0.0000000001
@@ -391,18 +421,25 @@ f1_mean_least_val=0.0000000001
 for epoch_i in range(start_epoch,n_epochs):
     
     # Sample shuffled img, GT labels -- from labeled data
-    ld_img_batch,ld_label_batch=shuffle_minibatch_mtask([train_imgs,train_labels],batch_size=cfg.mtask_bs)
+    if(parse_config.dsc_loss==3):
+        ld_img_batch,ld_label_batch,ld_dist_batch=shuffle_minibatch_mtask([train_imgs,train_labels,train_distributions],batch_size=cfg.mtask_bs)
+    else:
+        ld_img_batch,ld_label_batch=shuffle_minibatch_mtask([train_imgs,train_labels],batch_size=cfg.mtask_bs)
     if(parse_config.data_aug==1):
         # Apply affine transformations
         ld_img_batch,ld_label_batch=augmentation_function([ld_img_batch,ld_label_batch],dt)
     if(parse_config.rd_en==1 or parse_config.ri_en==1):
         # Apply random augmentations - random deformations + random contrast & brightness values
         ld_img_batch,ld_label_batch=create_rand_augs(cfg,parse_config,sess,ae_rd,ae_rc,ld_img_batch,ld_label_batch)
+    #Run optimizer update on the training data (labeled data
+    if(parse_config.dsc_loss==3):
+        train_summary,loss,_,debug=sess.run([ae['train_summary'],ae['seg_cost'],ae['optimizer_unet_all'],ae['debug']],\
+                                        feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['label_dists']:ld_dist_batch,ae['train_phase']:True})
+        # print(debug)
+    else:
+        train_summary,loss,_=sess.run([ae['train_summary'],ae['seg_cost'],ae['optimizer_unet_all']],\
+                                        feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:True})
 
-    #Run optimizer update on the training data (labeled data)
-    train_summary,loss,_=sess.run([ae['train_summary'],ae['seg_cost'],ae['optimizer_unet_all']],\
-                                      feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:True})
-    
     if(epoch_i%val_step_update==0):
         train_writer.add_summary(train_summary, epoch_i)
         train_writer.flush()
@@ -413,8 +450,12 @@ for epoch_i in range(start_epoch,n_epochs):
         mean_f1_val_prev,mp_best,mean_total_cost_val,mean_f1=f1_util.track_val_dsc(sess,ae,ae_1hot,saver,mean_f1_val_prev,threshold_f1,\
                                     best_model_dir,val_list,val_img_crop,val_label_crop,val_label_orig,pixel_val_list,\
                                     checkpoint_filename,epoch_i,en_1hot_val=parse_config.en_1hot)
-
-        tr_y_pred=sess.run(ae['y_pred'],feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:False})
+        if(parse_config.dsc_loss==3):
+            tr_y_pred, debug=sess.run([ae['y_pred'], ae['debug']],feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['label_dists']:train_distributions,ae['train_phase']:False})
+            dsc_list.append(debug[0])
+            speckle_list.append(debug[1])
+        else:
+            tr_y_pred=sess.run(ae['y_pred'],feed_dict={ae['x']:ld_img_batch,ae['y_l']:ld_label_batch,ae['train_phase']:False})
 
         if(parse_config.en_1hot==1):
             tr_accu=f1_util.calc_f1_score(np.argmax(tr_y_pred,axis=-1),np.argmax(ld_label_batch,-1))
@@ -452,6 +493,7 @@ for epoch_i in range(start_epoch,n_epochs):
 # Plot the training, validation (val) loss and DSC score of training & val images over all the epochs of training.
 f1_util.plt_seg_loss([tr_loss_list,val_loss_list],save_dir,title_str='ft_local_loss_model',plt_name='tr_seg_loss',ep_no=epoch_i)
 f1_util.plt_seg_loss([tr_dsc_list,val_dsc_list],save_dir,title_str='ft_local_loss_model',plt_name='tr_dsc_score',ep_no=epoch_i)
+f1_util.plt_seg_loss([dsc_list,speckle_list],save_dir,title_str='ft_local_loss_model',plt_name='tr_speckle_score',ep_no=epoch_i)
 
 sess.close()
 ######################################

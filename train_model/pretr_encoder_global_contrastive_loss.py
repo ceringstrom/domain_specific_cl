@@ -32,7 +32,7 @@ parser.add_argument('--comb_tr_imgs', type=str, default='c1')
 parser.add_argument('--lr_reg', type=float, default=0.001)
 
 #data aug - 0 - disabled, 1 - enabled
-parser.add_argument('--data_aug', type=int, default=0, choices=[0,1,2]) #include zoom aug
+parser.add_argument('--data_aug', type=int, default=0, choices=[0,1,2,3,4,5,6,7,8,9]) #include zoom aug
 #version of run
 parser.add_argument('--ver', type=int, default=0)
 
@@ -51,7 +51,7 @@ parser.add_argument('--global_loss_exp_no', type=int, default=2)
 parser.add_argument('--n_parts', type=int, default=4)
 
 #no of iterations to run
-parser.add_argument('--n_iter', type=int, default=10001)
+parser.add_argument('--n_iter', type=int, default=5001)
 
 #batch_size value - if global_loss_exp_no = 1, bt_size = 12; if global_loss_exp_no = 2, bt_size = 8
 parser.add_argument('--bt_size', type=int,default=12)
@@ -119,14 +119,28 @@ f1_util = f1_utilsObj(cfg,dt)
 
 ######################################
 #define directory to save the pre-training model of encoder
-save_dir=str(cfg.srt_dir)+'/models/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
+save_dir=str(cfg.srt_dir)+'/augmodelsfull/'+'split_'+str(parse_config.split)+'/'+str(parse_config.dataset)+'/trained_models/pretrain_encoder_with_global_contrastive_loss/'
 
 save_dir=str(save_dir)+'/bt_size_'+str(parse_config.bt_size)+'/'
 
 if(parse_config.data_aug==0):
     save_dir=str(save_dir)+'/no_data_aug/'
-else:
+elif(parse_config.data_aug==2):
     save_dir=str(save_dir)+'/with_data_aug/'
+elif(parse_config.data_aug==3):
+    save_dir=str(save_dir)+'/with_data_aug_sha/'
+elif(parse_config.data_aug==4):
+    save_dir=str(save_dir)+'/with_data_aug_nak/'
+elif(parse_config.data_aug==5):
+    save_dir=str(save_dir)+'/with_data_aug_all/'
+elif(parse_config.data_aug==6):
+    save_dir=str(save_dir)+'/with_data_aug_dep/'
+elif(parse_config.data_aug==7):
+    save_dir=str(save_dir)+'/with_data_aug_tgc/'
+elif(parse_config.data_aug==8):
+    save_dir=str(save_dir)+'/with_data_aug_nak2/'
+elif(parse_config.data_aug==9):
+    save_dir=str(save_dir)+'/with_data_aug_nakboth/'
 
 save_dir=str(save_dir)+'global_loss_exp_no_'+str(parse_config.global_loss_exp_no)+'_n_parts_'+str(parse_config.n_parts)+'/'
 
@@ -145,8 +159,15 @@ unl_list = data_list.train_data(parse_config.no_of_tr_imgs,parse_config.comb_tr_
 print('load unlabeled volumes for pre-training')
 
 if(parse_config.global_loss_exp_no==0):
-    unl_imgs=dt.load_cropped_img_labels(unl_list,label_present=0)
-elif(parse_config.global_loss_exp_no==3 or parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+    if(parse_config.data_aug==4 or parse_config.data_aug==5):
+        unl_imgs,unl_stats=dt.load_cropped_img_labels(unl_list,label_present=0,maps_present=True)
+    elif(parse_config.data_aug==8):
+        unl_imgs,unl_stats=dt.load_cropped_img_labels(unl_list,label_present=0,maps_present=True, param=1)
+    elif(parse_config.data_aug==9):
+        unl_imgs,unl_stats=dt.load_cropped_img_labels(unl_list,label_present=0,maps_present=True, param=2)
+    else:
+        unl_imgs=dt.load_cropped_img_labels(unl_list,label_present=0, param=0)
+elif(parse_config.global_loss_exp_no in [3, 5, 6, 7, 8, 9]):
     unl_imgs=dt.load_list_cropped_img_labels(unl_list,label_present=0)
 else:
     _,unl_imgs,_,_=load_val_imgs(unl_list,dt,orig_img_dt)
@@ -168,7 +189,7 @@ ae = model.encoder_pretrain_net(learn_rate_seg=parse_config.lr_reg,temp_fac=pars
                         global_loss_exp_no=parse_config.global_loss_exp_no,n_parts=parse_config.n_parts)
 
 # define network/graph to apply random contrast and brightness on input images
-if (parse_config.global_loss_exp_no==3 or parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+if (parse_config.global_loss_exp_no in [3, 5, 6, 7, 8, 9]):
     ae_rc = model.brit_cont_net(batch_size=2*cfg.batch_size_ft)
 else: 
     ae_rc = model.brit_cont_net(batch_size=cfg.batch_size_ft)
@@ -208,24 +229,46 @@ for epoch_i in range(start_epoch,n_epochs):
         # G^{R} -  default loss formulation as in simCLR (sample images in a batch from all volumes)
         #########################
         # original images batch sampled from unlabeled images
-        img_batch = shuffle_minibatch([unl_imgs], batch_size=cfg.batch_size_ft, labels_present=0)
-    
+        if parse_config.data_aug==4 or parse_config.data_aug==5 or parse_config.data_aug==8 or parse_config.data_aug==9:
+            img_batch, stats_batch = shuffle_minibatch([unl_imgs, unl_stats], batch_size=cfg.batch_size_ft, labels_present=1)
+        else:
+            img_batch = shuffle_minibatch([unl_imgs], batch_size=cfg.batch_size_ft, labels_present=0)
+
         # make 2 different sets of images from this chosen batch.
         # Each set is applied with different set of crop and intensity augmentation (aug) - brightness + distortion
     
         # Set 1 - random crop followed by random intensity aug
         if parse_config.data_aug==2:
-            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+            color_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==3:
+            color_batch1 = shadow_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==4 or parse_config.data_aug==8 or parse_config.data_aug==9:
+            color_batch1 = img_batch
+        elif parse_config.data_aug==5:
+            shad_batch1 = shadow_batch(img_batch, cfg, cfg.batch_size_ft)
+            color_batch1 = zoom_batch(shad_batch1, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==6:
+            color_batch1 = depth_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==7:
+            color_batch1 = tgc_batch(img_batch, cfg, cfg.batch_size_ft)
         else:
             crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
-        color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+            color_batch1 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
     
         # Set 2 - different random crop followed by random intensity aug
         if parse_config.data_aug==2:
-            crop_batch2 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+            color_batch2 = zoom_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==3:
+            color_batch2 = shadow_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==4 or parse_config.data_aug==5 or parse_config.data_aug==8 or parse_config.data_aug==9:
+            color_batch2 = np.expand_dims(stats_batch, axis=-1)
+        elif parse_config.data_aug==6:
+            color_batch2 = depth_batch(img_batch, cfg, cfg.batch_size_ft)
+        elif parse_config.data_aug==7:
+            color_batch2 = tgc_batch(img_batch, cfg, cfg.batch_size_ft)
         else:
             crop_batch2 = crop_batch([img_batch], cfg, cfg.batch_size_ft, parse_config.bbox_dim)
-        color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+            color_batch2 = sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
     
         # Stitch these 2 augmented sets into 1 batch for pre-training
         cat_batch = stitch_two_crop_batches([color_batch1, color_batch2], cfg, cfg.batch_size_ft)
@@ -381,8 +424,43 @@ for epoch_i in range(start_epoch,n_epochs):
         # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
         # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
         cat_batch = color_batch1
+    elif (parse_config.global_loss_exp_no == 7):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch = sample_minibatch_for_global_loss_opti_cine_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+    elif (parse_config.global_loss_exp_no == 8):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=False)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        cat_batch = color_batch1
+        print("shapes")
+        print(cat_batch.shape)
+        print(labels.shape)
+    elif (parse_config.global_loss_exp_no == 9):
+        n_vols,n_parts=len(unl_list),parse_config.n_parts
+        img_batch, labels = sample_minibatch_for_contrastive_loss_opti_hn(unl_imgs,cfg,cfg.batch_size_ft,n_parts,softened=True)
+        if parse_config.data_aug==2:
+            crop_batch1 = zoom_batch(img_batch, cfg, cfg.batch_size_ft*2)
+        else:
+            crop_batch1 = crop_batch([img_batch], cfg, cfg.batch_size_ft*2, parse_config.bbox_dim)
+        color_batch1=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch1})
+        # crop_batch2=crop_batch([img_batch],cfg,cfg.batch_size_ft,parse_config.bbox_dim)
+        # color_batch2=sess.run(ae_rc['rd_fin'], feed_dict={ae_rc['x_tmp']: crop_batch2})
+        # cat_batch = stitch_two_crop_batches([img_batch, color_batch1], cfg, cfg.batch_size_ft*2)
+        cat_batch = color_batch1
     #Run optimizer update on the training unlabeled data
-    if (parse_config.global_loss_exp_no==5 or parse_config.global_loss_exp_no==6):
+    if (parse_config.global_loss_exp_no in [5, 6, 8, 9]):
         train_summary,tr_loss,_=sess.run([ae['train_summary'],ae['reg_cost'],ae['optimizer_unet_reg']],\
                                         feed_dict={ae['x']:cat_batch,ae['train_phase']:True,ae['y_l']:labels})
     else:
